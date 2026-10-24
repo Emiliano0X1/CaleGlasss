@@ -18,6 +18,7 @@
 export interface WebTriggerRequest {
   body: string;
   headers: Record<string, string[]>;
+  queryParameters?: Record<string, string[]>;
 }
 
 export interface WebTriggerResponse {

@@ -1,48 +1,73 @@
-# Manifest de la app de Forge (Atlassian).
+# Manifest de la app de Forge (Atlassian). Base: plantilla jira-issue-panel-ui-kit.
+#
+# Activo hoy: el panel de issue (src/frontend/index.jsx + resolvers/index.ts).
+# Los módulos de los agentes están comentados abajo: se activan cuando se implementen
+# sus handlers, para no pedir scopes que todavía no se usan.
 #
 # TODO (agentes):
-# - [ ] Generar la app base con `forge create` (crea package.json, tsconfig y el app.id)
-#       y copiar aquí los módulos de abajo.
-# - [ ] Validar con `forge lint` antes de `forge deploy`: la forma exacta de los
-#       módulos puede cambiar entre versiones de Forge.
+# - [ ] Al implementar triggers/ y queue/, descomentar sus módulos y funciones.
 # - [ ] Ajustar los scopes a lo que de verdad usan lib/jira.ts y lib/confluence.ts.
 # - [ ] Agregar el host de SpacetimeDB en permissions.external.fetch.backend.
+# - [ ] Correr `forge lint` y `forge deploy`; si cambian los scopes, `forge install --upgrade`.
 # - [ ] (extra) Módulo y resource para static/panel/ (Custom UI).
 
 modules:
-  webtrigger:
-    - key: glasses-webtrigger          # lo llama eyeclick/bridge/forge_client.py
-      function: glasses
-    - key: telegram-webtrigger         # webhook del bot de Telegram
-      function: telegram
-  consumer:
-    - key: jobs-consumer
-      queue: agent-jobs                # router, agent y execute pasan por esta cola
+  jira:issuePanel:
+    - key: eyeclick-agents-hello-world-issue-panel
+      resource: main
       resolver:
-        function: consumer
-        method: job
+        function: resolver
+      render: native
+      title: eyeclick-agents
+      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+  webtrigger:
+    - key: debug-webtrigger            # lee un sprint por JQL (triggers/debug.ts); solo para depurar
+      function: debug
+  #   - key: glasses-webtrigger          # lo llama eyeclick/bridge/forge_client.py
+  #     function: glasses
+  #   - key: telegram-webtrigger         # webhook del bot de Telegram
+  #     function: telegram
+  # consumer:
+  #   - key: jobs-consumer
+  #     queue: agent-jobs                # router, agent y execute pasan por esta cola
+  #     resolver:
+  #       function: consumer
+  #       method: job
   function:
-    - key: glasses
-      handler: index.glasses
-    - key: telegram
-      handler: index.telegram
-    - key: consumer
-      handler: index.consumer
+    - key: resolver
+      handler: index.handler
+    - key: debug
+      handler: index.debug
+    # - key: glasses
+    #   handler: index.glasses
+    # - key: telegram
+    #   handler: index.telegram
+    # - key: consumer
+    #   handler: index.consumer
+
+resources:
+  - key: main
+    path: src/frontend/index.jsx
 
 app:
-  id: ari:cloud:ecosystem::app/TODO    # lo pone `forge create`
   runtime:
-    name: nodejs22.x
+    name: nodejs24.x
+    memoryMB: 256
+    architecture: arm64
+  id: ari:cloud:ecosystem::app/e90acf6a-96a9-475b-a7e4-e0e187188330
 
 permissions:
   scopes:
-    - read:jira-work
-    - write:jira-work
-    - read:confluence-content.all
-    - write:confluence-content
-  external:
-    fetch:
-      backend:
-        - api.anthropic.com
-        - api.telegram.org
-        # - TODO: host de SpacetimeDB
+    - read:jira-work                   # búsqueda JQL (triggers/debug.ts)
+    - read:sprint:jira-software
+    - read:board-scope:jira-software
+    # Se activan con los módulos de los agentes:
+    # - write:jira-work
+    # - read:confluence-content.all
+    # - write:confluence-content
+  # external:
+  #   fetch:
+  #     backend:
+  #       - api.anthropic.com
+  #       - api.telegram.org
+  #       # - TODO: host de SpacetimeDB

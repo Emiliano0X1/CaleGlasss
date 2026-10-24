@@ -95,10 +95,13 @@ CaleGlasss/
 │       ├── stt.py            # faster-whisper
 │       ├── forge_client.py   # POST to the Forge `glasses` web trigger (request or approve)
 │       └── live_state.py     # reads SpacetimeDB and updates the overlay
-├── forge-app/                # Atlassian Forge app (TypeScript)                       (stubs)
-│   ├── manifest.yml
+├── forge-app/                # Atlassian Forge app: issue panel deployed ✅, agents (stubs)
+│   ├── manifest.yml          # issue panel active; agent modules commented out
+│   ├── package.json          # from the jira-issue-panel-ui-kit template
 │   ├── src/
 │   │   ├── index.ts          # exports every handler
+│   │   ├── frontend/index.jsx # issue panel UI (UI Kit)                                 ✅
+│   │   ├── resolvers/index.ts # issue panel resolver                                    ✅
 │   │   ├── triggers/
 │   │   │   ├── glasses.ts    # voice requests and approvals
 │   │   │   └── telegram.ts   # ✅ button and written requests
@@ -184,6 +187,37 @@ Open decisions (agree on them before writing code):
 - **How to start it:** for example, a `run.py` flag so `python run.py --mock` keeps working without the mic or network.
 - **New dependencies** (`faster-whisper`, HTTP client, SpacetimeDB client) are added to `requirements.txt` when `bridge/` is implemented. The TypeScript projects keep their own `package.json`.
 
+### Running the Forge app
+
+The app (`eyeclick-agents`) is installed on the Jira demo site **one-atlas-hyek.atlassian.net** (development environment). Open any issue there to see its panel.
+
+```bash
+cd forge-app
+npm install                                   # first time
+forge lint
+forge deploy -e development                   # after changing manifest.yml or dependencies
+forge install --demo-site --product jira      # first time only
+forge install --upgrade                       # when manifest.yml scopes change
+forge tunnel                                  # leave it running: code changes show up when you reload the issue
+```
+
+To deploy you need to be logged in (`forge login`) and a member of the app's Developer Space.
+
+**After changing `manifest.yml` (modules or scopes), restart `forge tunnel`.** It only reads the manifest when it starts; while it's running, Forge sends every call to it, and a function it doesn't know returns `424 Failed Dependency`.
+
+#### `debug` web trigger: read a sprint
+
+`forge-app/src/triggers/debug.ts` searches a sprint's issues with JQL as the app (`api.asApp().requestJira`) and returns Jira's JSON (`summary`, `status`, `assignee`, `priority`). Sprint ids come from `scripts/demo_ids.txt` (Sprint 12 = `5207`, the default).
+
+```bash
+cd forge-app
+forge webtrigger create -f debug-webtrigger -s one-atlas-hyek.atlassian.net -p jira -e development
+curl "<URL>"                  # Sprint 12
+curl "<URL>?sprint=5208"      # another sprint
+```
+
+Each call logs `debug: sprint 5207 -> HTTP 200, 15 issues` in the `forge tunnel` terminal. A 401/403 means a scope is missing: add it to `manifest.yml`, `forge deploy`, `forge install --upgrade`. Anyone with the URL can read the sprint, so don't commit it, and remove or protect this trigger before the demo.
+
 ## SWE 1 tasks: detection (camera → events)
 
 Files: `eyeclick/vision/*`, `eyeclick/logic/blink_fsm.py`
@@ -220,7 +254,8 @@ Files: `eyeclick/bus.py`, `eyeclick/app.py`, `run.py`, `eyeclick/sources/mock.py
 - [ ] `eyeclick/bridge/stt.py`: transcribe the recording with faster-whisper
 - [ ] `eyeclick/bridge/forge_client.py`: POST the text (request or approval) to the `glasses` web trigger
 - [ ] `eyeclick/bridge/live_state.py`: read SpacetimeDB and update the overlay from the main thread
-- [ ] `forge-app/`: triggers (`glasses`, `telegram`), queue consumer, router, agents, actions, `lib/`
+- [x] `forge-app/`: app created from `jira-issue-panel-ui-kit`, deployed and installed on the demo site
+- [ ] `forge-app/`: triggers (`glasses`, `telegram`), queue consumer, router, agents, actions, `lib/` (then uncomment their modules in `manifest.yml`)
 - [ ] `stdb/`: SpacetimeDB module with the request/job state
 - [ ] `dashboard/`: web panel that reads the same state
 - [ ] `forge-app/static/panel/`: Custom UI (extra)

@@ -7,3 +7,8 @@ events_log.csv
 calib.json
 *.mp4
 *.avi
+
+# Node (forge-app/, dashboard/, stdb/)
+node_modules/
+.forge/
+.env
