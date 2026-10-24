@@ -32,21 +32,56 @@ from eyeclick.config import CAMERA_INDEX, FRAME_H, FRAME_W
 log = logging.getLogger(__name__)
 
 MIN_FPS = 15
+WARMUP_S = 3.0      # muchas cámaras USB tardan en entregar el primer frame (medido: ~1.2 s)
 
 
-def _backend():
-    return cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
+def _strategies():
+    """(nombre, backend, pedir FRAME_W x FRAME_H) en orden de preferencia.
+    Algunas cámaras endoscópicas no entregan imagen con DSHOW a 640x480 pero sí
+    a su resolución propia, o solo con Media Foundation (MSMF)."""
+    if platform.system() == "Windows":
+        return [("DSHOW", cv2.CAP_DSHOW, True), ("DSHOW, resolución propia", cv2.CAP_DSHOW, False),
+                ("MSMF", cv2.CAP_MSMF, True), ("MSMF, resolución propia", cv2.CAP_MSMF, False)]
+    return [("default", cv2.CAP_ANY, True), ("default, resolución propia", cv2.CAP_ANY, False)]
 
 
-def open_camera(index):
-    """cv2.VideoCapture con el backend correcto y FRAME_W x FRAME_H, o None si no abre."""
-    cap = cv2.VideoCapture(index, _backend())
-    if not cap.isOpened():
+def _first_frame(cap, warmup):
+    end = time.monotonic() + warmup
+    while time.monotonic() < end:
+        ok, frame = cap.read()
+        if ok and frame is not None and frame.size:
+            return frame
+        time.sleep(0.02)
+    return None
+
+
+def open_camera(index, warmup=WARMUP_S):
+    """Abre la cámara probando _strategies() hasta que una entregue un frame.
+
+    Devuelve (cap, cómo) con la cámara ya entregando imágenes, o (None, por qué).
+    """
+    reason = "no disponible"
+    for name, backend, sized in _strategies():
+        cap = cv2.VideoCapture(index, backend)
+        if not cap.isOpened():
+            cap.release()
+            continue
+        if sized:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
+        if _first_frame(cap, warmup) is not None:
+            return cap, name
         cap.release()
-        return None
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
-    return cap
+        reason = f"abre pero no entrega imágenes en {warmup:.0f} s"
+    return None, reason
+
+
+def _quiet_opencv():
+    """Sin los '[ WARN ] ... can't capture by index' de OpenCV al buscar cámaras."""
+    try:
+        cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+    except AttributeError:
+        pass
 
 
 class _LatestFrame:
@@ -98,10 +133,11 @@ class CameraSource(_LatestFrame):
         self.index = index
 
     def start(self):
-        self._cap = open_camera(self.index)
+        self._cap, how = open_camera(self.index)
         if self._cap is None:
-            raise RuntimeError(f"No se pudo abrir la cámara {self.index} "
+            raise RuntimeError(f"Cámara {self.index}: {how} "
                                "(prueba: python -m eyeclick.vision.camera --probe)")
+        log.info("Cámara %d abierta con %s", self.index, how)
         self._launch("camera")
 
     def _loop(self):
@@ -158,25 +194,28 @@ class VideoFileSource(_LatestFrame):
 # --- herramientas de línea de comandos ---
 
 def probe(max_index=5, frames=30):
-    """Imprime qué índices abren, con su resolución y FPS reales."""
+    """Imprime qué índices abren, con qué backend, resolución y FPS reales."""
+    _quiet_opencv()
+    print(f"Buscando cámaras (hasta {WARMUP_S:.0f} s por intento)...")
     for i in range(max_index):
-        cap = open_camera(i)
+        cap, how = open_camera(i)
         if cap is None:
-            print(f"[{i}] no disponible")
+            print(f"[{i}] {how}")
             continue
-        ok, frame = cap.read()
-        if not ok:
-            print(f"[{i}] abre pero no entrega imágenes")
-            cap.release()
-            continue
+        frame = None
         t0, n = time.monotonic(), 0
         for _ in range(frames):
-            n += cap.read()[0]
+            ok, f = cap.read()
+            if ok:
+                frame, n = f, n + 1
         fps = n / (time.monotonic() - t0)
+        cap.release()
+        if frame is None:
+            print(f"[{i}] ({how}) entregó un frame y luego se detuvo: revisa el cable o el hub USB")
+            continue
         h, w = frame.shape[:2]
         slow = f"  <- menos de {MIN_FPS} FPS" if fps < MIN_FPS else ""
-        print(f"[{i}] {w}x{h} a {fps:.1f} FPS{slow}")
-        cap.release()
+        print(f"[{i}] {w}x{h} a {fps:.1f} FPS ({how}){slow}")
 
 
 def record(index, path, seconds):

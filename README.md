@@ -28,7 +28,7 @@ On Mac, give **Camera**, **Accessibility** and **Input Monitoring** permissions 
 ## How to run it
 
 ```bash
-python run.py --mock              # simulator: hold F8 = eye closed, F9 = pause
+python run.py --mock              # simulator: hold F8 = eye closed, F7 = eye lost, F9 = pause
 python run.py --video ojo.mp4     # real detection on a recorded video
 python run.py --camera 1          # real detection with the endoscopic camera
 python run.py --camera 1 --demo   # same, with the monitor in demo mode
@@ -80,7 +80,7 @@ CaleGlasss/
 │   │   ├── annotate.py       # draws contour, center and status on the frame          ✅
 │   │   └── pipeline.py       # thread: frame -> detector -> FSM -> bus + EyeView      ✅
 │   ├── sources/
-│   │   └── mock.py           # F8 = eye closed; same interface as pipeline           (SWE 2)
+│   │   └── mock.py           # F8 = eye closed, F7 = lost; same interface as pipeline (SWE 2)
 │   ├── actions/              #                                                       (SWE 2)
 │   │   ├── mouse.py          # save the position and click there
 │   │   ├── feedback.py       # beeps
@@ -91,7 +91,10 @@ CaleGlasss/
 └── tests/
     ├── test_blink_fsm.py     # ✅ passes
     ├── test_vision.py        # ✅ passes (synthetic eye images, no camera needed)
-    └── test_bus.py           # skipped until bus.py is implemented
+    ├── test_bus.py
+    ├── test_feedback.py / test_logger.py / test_mouse.py
+    ├── test_monitor.py / test_overlay.py / test_mock.py
+    └── conftest.py           # one shared Tk for the UI tests
 ```
 
 ✅ = already implemented. Every other file has its interface defined and a `TODO` list in its docstring. To see every pending item:
@@ -137,14 +140,14 @@ Files: `eyeclick/vision/*`, `eyeclick/logic/blink_fsm.py`
 
 Files: `eyeclick/bus.py`, `eyeclick/app.py`, `run.py`, `eyeclick/sources/mock.py`, `eyeclick/actions/*`, `eyeclick/ui/*`
 
-- [ ] `sources/mock.py`: simulate the eye with F8 and produce a fake `EyeView` (gray image with the status written on it)
-- [ ] `bus.py`: publish from any thread and dispatch in the main thread; enable `tests/test_bus.py`
-- [ ] `actions/mouse.py`: save the cursor position on close, click there on open, cooldown and pause
-- [ ] `actions/feedback.py`: beep at 0.5 s, a different beep at 1.2 s, double beep on click
-- [ ] `actions/logger.py`: log to `events_log.csv`
-- [ ] `ui/monitor.py`: eye video, progress bar, status, counters and controls
-- [ ] `ui/overlay.py`: always-visible floating indicator
-- [ ] `app.py` and `run.py`: build the pieces for the chosen mode and shut everything down cleanly
+- [x] `sources/mock.py`: simulate the eye with F8 and produce a fake `EyeView` (gray image with the status written on it)
+- [x] `bus.py`: publish from any thread and dispatch in the main thread; enable `tests/test_bus.py`
+- [x] `actions/mouse.py`: save the cursor position on close, click there on open, cooldown and pause
+- [x] `actions/feedback.py`: beep at 0.5 s, a different beep at 1.2 s, double beep on click
+- [x] `actions/logger.py`: log to `events_log.csv`
+- [x] `ui/monitor.py`: eye video, progress bar, status, counters and controls
+- [x] `ui/overlay.py`: always-visible floating indicator
+- [x] `app.py` and `run.py`: build the pieces for the chosen mode and shut everything down cleanly
 - [ ] Mac permissions (Accessibility, Input Monitoring, Camera) or test on Windows
 
 ## Schedule
