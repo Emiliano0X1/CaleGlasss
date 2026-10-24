@@ -1,0 +1,20 @@
+{
+  // Used by the editor, `npm run typecheck` and `forge lint` (which needs every src file included,
+  // including the UI Kit panel in src/frontend/index.jsx). Forge's bundler (ts-loader) also reads it:
+  // don't set "noEmit" here or `forge deploy` fails with "TypeScript emitted no output";
+  // the typecheck script passes --noEmit instead.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "checkJs": false,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*"]
+}

@@ -218,6 +218,29 @@ curl "<URL>?sprint=5208"      # another sprint
 
 Each call logs `debug: sprint 5207 -> HTTP 200, 15 issues` in the `forge tunnel` terminal. A 401/403 means a scope is missing: add it to `manifest.yml`, `forge deploy`, `forge install --upgrade`. Anyone with the URL can read the sprint, so don't commit it, and remove or protect this trigger before the demo.
 
+#### `glasses` web trigger: requests from the glasses
+
+`forge-app/src/triggers/glasses.ts` receives a request and writes it to SpacetimeDB (`create_work` + `log_event` through `src/lib/stdb.ts`).
+
+- Header `x-secret` must equal the `APPROVAL_SECRET` Forge variable, otherwise `401` and nothing is created.
+- Body: `{ "type": "request", "text": "...", "person": "me", "request_id": "r1" }`.
+- The same `request_id` twice returns `200` with `"duplicate": true` and doesn't create anything new.
+
+Secrets live in encrypted Forge variables (`STDB_TOKEN`, `APPROVAL_SECRET`) and, for your notes, in the gitignored `stdb/.env` and `forge-app/.env` (which also holds `GLASSES_WEBTRIGGER_URL`).
+
+```bash
+cd forge-app
+forge variables set --encrypt -e development STDB_TOKEN <token>       # from stdb/.env
+forge variables set --encrypt -e development APPROVAL_SECRET <phrase>
+forge webtrigger create -f glasses-webtrigger -s one-atlas-hyek.atlassian.net -p jira -e development
+curl -X POST "<URL>" -H "x-secret: <APPROVAL_SECRET>" -H "Content-Type: application/json" \
+     -d '{"type":"request","text":"move the pending items","person":"me","request_id":"r2"}'
+```
+
+`forge tunnel` runs the code on your machine, where encrypted variables don't exist. Export them with the `FORGE_USER_VAR_` prefix before starting it (`FORGE_USER_VAR_STDB_TOKEN`, `FORGE_USER_VAR_APPROVAL_SECRET`), or stop the tunnel to hit the deployed version.
+
+`npm run typecheck` type-checks `src/`. Don't add `"noEmit"` to `tsconfig.json`: Forge's bundler reads it and `forge deploy` fails with "TypeScript emitted no output".
+
 ## SWE 1 tasks: detection (camera → events)
 
 Files: `eyeclick/vision/*`, `eyeclick/logic/blink_fsm.py`

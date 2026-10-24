@@ -41,6 +41,30 @@ PowerShell 5.1 strips the inner double quotes when it passes them to `spacetime.
 
 The database is live on maincloud: https://spacetimedb.com/agentes
 
+## HTTP access (what Forge uses)
+
+Forge runs in Atlassian's cloud and can't reach localhost, so the database lives on maincloud.
+Forge writes with its own SpacetimeDB identity:
+
+```bash
+curl -X POST https://maincloud.spacetimedb.com/v1/identity     # -> { "identity": ..., "token": ... }
+```
+
+The identity and token are in `stdb/.env` (gitignored, never commit it):
+`STDB_HOST`, `STDB_DATABASE`, `STDB_IDENTITY`, `STDB_TOKEN`. In Forge the token goes in an encrypted
+environment variable (`forge variables set --encrypt STDB_TOKEN ...`), not in the code.
+
+```bash
+B=https://maincloud.spacetimedb.com/v1/database/agentes
+curl -X POST "$B/sql" -d "SELECT * FROM work_items"                     # read: JSON with schema + rows
+curl -X POST "$B/call/log_event" -H "Authorization: Bearer $STDB_TOKEN" \
+     -H "Content-Type: application/json" -d '["me", "hello"]'           # reducer args as a JSON array
+```
+
+Over HTTP, `/call/<reducer>` takes **all the arguments in one JSON array**, unlike `spacetime call`.
+The tables are public and the reducers don't check the caller yet, so anyone who knows the name can
+read and write (see TODO).
+
 On Windows the installer puts `spacetime.exe` in `%LOCALAPPDATA%\SpacetimeDB`; open a new terminal if `spacetime` isn't found.
 
 ## TODO

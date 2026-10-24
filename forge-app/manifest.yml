@@ -1,13 +1,15 @@
 # Forge app manifest (Atlassian). Base: jira-issue-panel-ui-kit template.
 #
-# Active today: the issue panel (src/frontend/index.jsx + resolvers/index.ts) and the
-# `debug` web trigger. The agents' modules are commented out below: they get enabled
-# once their handlers are implemented, so the app doesn't ask for unused scopes.
+# Active today: the issue panel (src/frontend/index.jsx + resolvers/index.ts), the
+# `debug` web trigger and the `glasses` web trigger (writes to SpacetimeDB). The rest of
+# the agents' modules are commented out below: they get enabled once their handlers are
+# implemented, so the app doesn't ask for unused scopes.
+#
+# Secrets (encrypted Forge variables, never in the code): STDB_TOKEN, APPROVAL_SECRET.
 #
 # TODO (agents):
-# - [ ] When triggers/ and queue/ are implemented, uncomment their modules and functions.
+# - [ ] When telegram and queue/ are implemented, uncomment their modules and functions.
 # - [ ] Adjust the scopes to what lib/jira.ts and lib/confluence.ts really use.
-# - [ ] Add the SpacetimeDB host to permissions.external.fetch.backend.
 # - [ ] Run `forge lint` and `forge deploy`; if the scopes change, `forge install --upgrade`.
 # - [ ] (extra) Module and resource for static/panel/ (Custom UI).
 
@@ -23,8 +25,8 @@ modules:
   webtrigger:
     - key: debug-webtrigger            # reads a sprint with JQL (triggers/debug.ts); debugging only
       function: debug
-  #   - key: glasses-webtrigger          # called by eyeclick/bridge/forge_client.py
-  #     function: glasses
+    - key: glasses-webtrigger          # requests from the glasses; called by eyeclick/bridge/forge_client.py
+      function: glasses
   #   - key: telegram-webtrigger         # Telegram bot webhook
   #     function: telegram
   # consumer:
@@ -38,8 +40,8 @@ modules:
       handler: index.handler
     - key: debug
       handler: index.debug
-    # - key: glasses
-    #   handler: index.glasses
+    - key: glasses
+      handler: index.glasses
     # - key: telegram
     #   handler: index.telegram
     # - key: consumer
@@ -65,9 +67,10 @@ permissions:
     # - write:jira-work
     # - read:confluence-content.all
     # - write:confluence-content
-  # external:
-  #   fetch:
-  #     backend:
-  #       - api.anthropic.com
-  #       - api.telegram.org
-  #       # - TODO: SpacetimeDB host
+  external:
+    fetch:
+      backend:
+        - address: maincloud.spacetimedb.com   # SpacetimeDB (lib/stdb.ts)
+        # Enabled together with the agents' modules:
+        # - address: api.anthropic.com
+        # - address: api.telegram.org
