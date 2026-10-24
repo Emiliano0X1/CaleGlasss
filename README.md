@@ -34,6 +34,15 @@ python run.py --camera 1          # real detection with the endoscopic camera
 python run.py --camera 1 --demo   # same, with the monitor in demo mode
 ```
 
+Camera tools (SWE 1), to mount the camera and record the test video:
+
+```bash
+python -m eyeclick.vision.camera --probe                       # which index, resolution and real FPS
+python -m eyeclick.vision.camera --record ojo.mp4 --camera 1   # 2 min with preview (q = stop)
+```
+
+If there's no `calib.json`, the pipeline calibrates on start (~8 s, follow the message on the monitor). Delete `calib.json` or press Recalibrate when the light changes or the camera moves.
+
 ## Architecture
 
 One Python process. Detection runs in background threads and actions run in the main thread (tkinter). They connect **only** through an event queue (`bus.py`).
@@ -65,11 +74,11 @@ CaleGlasss/
 │   ├── logic/
 │   │   └── blink_fsm.py      # durations -> events, with debounce                    (SWE 1) ✅
 │   ├── vision/               #                                                       (SWE 1)
-│   │   ├── camera.py         # CameraSource and VideoFileSource
-│   │   ├── detector.py       # pupil -> open / closed / lost
-│   │   ├── calibration.py    # 3 s eye open + 3 s eye closed -> calib.json
-│   │   ├── annotate.py       # draws contour, center and status on the frame
-│   │   └── pipeline.py       # thread: frame -> detector -> FSM -> bus + EyeView
+│   │   ├── camera.py         # CameraSource and VideoFileSource (+ --probe / --record tools)  ✅
+│   │   ├── detector.py       # pupil -> open / closed / lost                          ✅
+│   │   ├── calibration.py    # 3 s eye open + 3 s eye closed -> calib.json            ✅
+│   │   ├── annotate.py       # draws contour, center and status on the frame          ✅
+│   │   └── pipeline.py       # thread: frame -> detector -> FSM -> bus + EyeView      ✅
 │   ├── sources/
 │   │   └── mock.py           # F8 = eye closed; same interface as pipeline           (SWE 2)
 │   ├── actions/              #                                                       (SWE 2)
@@ -81,6 +90,7 @@ CaleGlasss/
 │       └── overlay.py        # small floating indicator
 └── tests/
     ├── test_blink_fsm.py     # ✅ passes
+    ├── test_vision.py        # ✅ passes (synthetic eye images, no camera needed)
     └── test_bus.py           # skipped until bus.py is implemented
 ```
 
@@ -113,14 +123,15 @@ Files: `eyeclick/vision/*`, `eyeclick/logic/blink_fsm.py`
 
 - [ ] Connect the endoscopic camera; confirm the index, resolution and actual FPS (15 or more)
 - [ ] Mount the camera low and to the side of the eye; dim or cover its LEDs
-- [ ] `camera.py`: `CameraSource` (thread that keeps only the latest frame) and `VideoFileSource`
-- [ ] `detector.py`: detect the pupil and decide open / closed / lost
-- [ ] `calibration.py`: 3 s eye open + 3 s eye closed to set thresholds; save to `calib.json`
+- [x] `camera.py`: `CameraSource` (thread that keeps only the latest frame) and `VideoFileSource`
+- [x] `detector.py`: detect the pupil and decide open / closed / lost (+ Plan B: `USE_STD_ONLY`)
+- [x] `calibration.py`: 3 s eye open + 3 s eye closed to set thresholds; save to `calib.json`
 - [x] `blink_fsm.py`: durations → events, with debounce
-- [ ] `annotate.py`: draw what the detector found on the 320×240 frame
-- [ ] `pipeline.py`: tie it all together in one thread, publish events and store the latest `EyeView`
-- [ ] Record 2 minutes of eye video to test without the person wearing the glasses
+- [x] `annotate.py`: draw what the detector found on the 320×240 frame
+- [x] `pipeline.py`: tie it all together in one thread, publish events and store the latest `EyeView`
+- [ ] Record 2 minutes of eye video to test without the person wearing the glasses (`--record`, see below)
 - [x] pytest tests for the state machine (basic cases)
+- [x] pytest tests for detection, calibration and pipeline on synthetic eye images (`tests/test_vision.py`)
 
 ## SWE 2 tasks: actions (events → computer)
 
