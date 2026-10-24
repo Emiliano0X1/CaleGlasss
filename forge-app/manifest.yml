@@ -1,0 +1,48 @@
+# Manifest de la app de Forge (Atlassian).
+#
+# TODO (agentes):
+# - [ ] Generar la app base con `forge create` (crea package.json, tsconfig y el app.id)
+#       y copiar aquí los módulos de abajo.
+# - [ ] Validar con `forge lint` antes de `forge deploy`: la forma exacta de los
+#       módulos puede cambiar entre versiones de Forge.
+# - [ ] Ajustar los scopes a lo que de verdad usan lib/jira.ts y lib/confluence.ts.
+# - [ ] Agregar el host de SpacetimeDB en permissions.external.fetch.backend.
+# - [ ] (extra) Módulo y resource para static/panel/ (Custom UI).
+
+modules:
+  webtrigger:
+    - key: glasses-webtrigger          # lo llama eyeclick/bridge/forge_client.py
+      function: glasses
+    - key: telegram-webtrigger         # webhook del bot de Telegram
+      function: telegram
+  consumer:
+    - key: jobs-consumer
+      queue: agent-jobs                # router, agent y execute pasan por esta cola
+      resolver:
+        function: consumer
+        method: job
+  function:
+    - key: glasses
+      handler: index.glasses
+    - key: telegram
+      handler: index.telegram
+    - key: consumer
+      handler: index.consumer
+
+app:
+  id: ari:cloud:ecosystem::app/TODO    # lo pone `forge create`
+  runtime:
+    name: nodejs22.x
+
+permissions:
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - read:confluence-content.all
+    - write:confluence-content
+  external:
+    fetch:
+      backend:
+        - api.anthropic.com
+        - api.telegram.org
+        # - TODO: host de SpacetimeDB

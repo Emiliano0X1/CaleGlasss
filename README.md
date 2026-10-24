@@ -11,6 +11,8 @@ Smart Glasses for Cal Hacks 13.0. **EyeClick**: a Python program reads an endosc
 
 The click fires **when the eye opens**, at the position the cursor had **when it closed**. A beep plays at 0.5 s and a different one at 1.2 s.
 
+On top of EyeClick sits the **agent team**: the wearer asks for something by voice, a Forge app routes it to Claude agents (Jira, reporter), and the progress shows up live on the glasses' overlay and on a web dashboard. See [Agent team](#agent-team-voice--forge--agents).
+
 ## Setup
 
 Python 3.11, Windows or Mac.
@@ -85,9 +87,37 @@ CaleGlasss/
 │   │   ├── mouse.py          # save the position and click there
 │   │   ├── feedback.py       # beeps
 │   │   └── logger.py         # events_log.csv
-│   └── ui/                   #                                                       (SWE 2)
-│       ├── monitor.py        # window with the eye video, status and controls
-│       └── overlay.py        # small floating indicator
+│   ├── ui/                   #                                                       (SWE 2)
+│   │   ├── monitor.py        # window with the eye video, status and controls
+│   │   └── overlay.py        # small floating indicator
+│   └── bridge/               # glasses-bridge: voice + agents, same process as EyeClick  (stubs)
+│       ├── listener.py       # microphone and blink activation (bus subscriber)
+│       ├── stt.py            # faster-whisper
+│       ├── forge_client.py   # POST to the Forge `glasses` web trigger (request or approve)
+│       └── live_state.py     # reads SpacetimeDB and updates the overlay
+├── forge-app/                # Atlassian Forge app (TypeScript)                       (stubs)
+│   ├── manifest.yml
+│   ├── src/
+│   │   ├── index.ts          # exports every handler
+│   │   ├── triggers/
+│   │   │   ├── glasses.ts    # voice requests and approvals
+│   │   │   └── telegram.ts   # ✅ button and written requests
+│   │   ├── queue/consumer.ts # dispatches: router, agent, execute
+│   │   ├── agents/
+│   │   │   ├── loop.ts       # Claude loop with tools
+│   │   │   ├── router.ts     # decides which agent and creates the jobs
+│   │   │   ├── jira_agent.ts # Jira agent prompt and tools
+│   │   │   └── reporter.ts   # reporter prompt and tools
+│   │   ├── execute/actions.ts # one function per plan action type
+│   │   └── lib/
+│   │       ├── claude.ts     # Claude client + model (claude-opus-5-5)
+│   │       ├── stdb.ts       # writes the live state to SpacetimeDB
+│   │       ├── jira.ts
+│   │       ├── confluence.ts
+│   │       └── telegram.ts
+│   └── static/panel/         # Custom UI (extra)
+├── stdb/                     # SpacetimeDB module (TypeScript), see stdb/README.md    (to do)
+├── dashboard/                # web panel (Vite + SpacetimeDB SDK), see its README    (to do)
 └── tests/
     ├── test_blink_fsm.py     # ✅ passes
     ├── test_vision.py        # ✅ passes (synthetic eye images, no camera needed)
@@ -97,11 +127,15 @@ CaleGlasss/
     └── conftest.py           # one shared Tk for the UI tests
 ```
 
-✅ = already implemented. Every other file has its interface defined and a `TODO` list in its docstring. To see every pending item:
+Names are in English: the plan's `lentes.ts` is `glasses.ts` and `reportero.ts` is `reporter.ts`. `glasses-bridge` from the agent-team plan lives in `eyeclick/bridge/` instead of a top-level `glasses-bridge/` folder: it has to run in the same process as EyeClick (to listen to the bus and update the overlay), and Python can't import a package whose name has a hyphen. The TypeScript projects (`forge-app/`, `stdb/`, `dashboard/`) are separate and sit at the root.
+
+✅ = already implemented. (stubs) = files created with their interface and a `TODO` list in the header comment, not implemented yet. To see every pending item:
 
 ```bash
 git grep -n "TODO (SWE 1)"
 git grep -n "TODO (SWE 2)"
+git grep -n "TODO (bridge)"     # eyeclick/bridge/
+git grep -n "TODO (agentes)"    # forge-app/
 ```
 
 ## Event contract
@@ -119,6 +153,36 @@ git grep -n "TODO (SWE 2)"
 Right click: `EYE_CLOSED → STAGE_LEFT → STAGE_RIGHT → CLICK_RIGHT`. Blink: `EYE_CLOSED → CANCELLED`.
 
 **Nobody changes `events.py` or `config.py` without telling the other person first.**
+
+## Agent team (voice → Forge → agents)
+
+```
+glasses laptop (Python, one process)                    cloud
+eyeclick bus --blink activation--> bridge/listener.py
+                                   -> stt.py (faster-whisper, local)
+                                   -> forge_client.py --POST--> forge-app triggers/glasses.ts
+                                                                  -> queue/consumer.ts
+                                                                     -> agents/router.ts -> jira_agent / reporter (agents/loop.ts + Claude)
+                                                                     -> execute/actions.ts -> Jira, Confluence, Telegram
+                                                                  -> lib/stdb.ts writes the state -> stdb/ (SpacetimeDB)
+ui/overlay.py <-- bridge/live_state.py <--------------------------------------------- reads stdb/
+                                                                  dashboard/ reads stdb/ too
+Telegram -> triggers/telegram.ts (✅ approve, written requests) -> same queue
+```
+
+How the bridge plugs into EyeClick, without changing what already works:
+
+- **`listener.py` is one more bus subscriber.** It gets a `handle(event)` and is registered in `app.py` like `mouse` or `feedback`. Starting the mic is triggered by a blink gesture.
+- **Nothing slow runs in the main thread.** Recording, `stt.py` and `forge_client.py` run in their own thread; `handle()` only starts or stops them. Otherwise `bus.dispatch()` and the clicks freeze while Whisper transcribes.
+- **`live_state.py` never touches tkinter directly.** It reads SpacetimeDB in its own thread and hands each update to the main thread (the same way `app.py` already does with F9 pause requests). Then the main thread calls `overlay.show(...)`.
+- **Approvals:** the wearer approves a plan either from the glasses (`forge_client.py` → `glasses.ts`, "approve") or from Telegram (`telegram.ts`, ✅ button). Both go into the same queue.
+
+Open decisions (agree on them before writing code):
+
+- **Which gesture activates the mic.** It must not collide with clicks (0.5–3.0 s) or rest (> 3 s). If it needs a new event, it means changing `events.py`, so both SWEs have to agree.
+- **Owner** of `eyeclick/bridge/`, `forge-app/`, `stdb/` and `dashboard/`.
+- **How to start it:** for example, a `run.py` flag so `python run.py --mock` keeps working without the mic or network.
+- **New dependencies** (`faster-whisper`, HTTP client, SpacetimeDB client) are added to `requirements.txt` when `bridge/` is implemented. The TypeScript projects keep their own `package.json`.
 
 ## SWE 1 tasks: detection (camera → events)
 
@@ -149,6 +213,17 @@ Files: `eyeclick/bus.py`, `eyeclick/app.py`, `run.py`, `eyeclick/sources/mock.py
 - [x] `ui/overlay.py`: always-visible floating indicator
 - [x] `app.py` and `run.py`: build the pieces for the chosen mode and shut everything down cleanly
 - [ ] Mac permissions (Accessibility, Input Monitoring, Camera) or test on Windows
+
+## Agent team tasks (owner TBD)
+
+- [ ] `eyeclick/bridge/listener.py`: bus subscriber; blink activation starts and stops recording
+- [ ] `eyeclick/bridge/stt.py`: transcribe the recording with faster-whisper
+- [ ] `eyeclick/bridge/forge_client.py`: POST the text (request or approval) to the `glasses` web trigger
+- [ ] `eyeclick/bridge/live_state.py`: read SpacetimeDB and update the overlay from the main thread
+- [ ] `forge-app/`: triggers (`glasses`, `telegram`), queue consumer, router, agents, actions, `lib/`
+- [ ] `stdb/`: SpacetimeDB module with the request/job state
+- [ ] `dashboard/`: web panel that reads the same state
+- [ ] `forge-app/static/panel/`: Custom UI (extra)
 
 ## Schedule
 
