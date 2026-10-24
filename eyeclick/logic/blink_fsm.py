@@ -7,10 +7,12 @@ seguidos; el cierre empieza a contar desde el primero de esos frames.
 No conoce la cámara: se prueba con secuencias inventadas (tests/test_blink_fsm.py)
 y SWE 2 la reutiliza tal cual en sources/mock.py.
 
-TODO (SWE 1):
-- [ ] Revisar que MIN_BLINK se respete (hoy cualquier cierre < LEFT_AT cancela).
-- [ ] Decidir si un 'lost' corto (< LOST_FRAMES) con el ojo cerrado debe
-      seguir contando el tiempo del cierre o pausarlo.
+Decisiones:
+- MIN_BLINK: todo cierre < LEFT_AT termina en CANCELLED, así que un parpadeo natural
+  (< MIN_BLINK) nunca hace clic; entre MIN_BLINK y LEFT_AT hay un margen muerto que
+  también cancela. MIN_BLINK solo lo usa el monitor para la barra.
+- Un 'lost' corto (< LOST_FRAMES) con el ojo cerrado NO pausa el cierre: el tiempo
+  sigue corriendo y los STAGE_* salen a su hora aunque caigan en esos frames.
 """
 from eyeclick.config import CANCEL_AT, FRAMES_TO_CHANGE, LEFT_AT, LOST_FRAMES, RIGHT_AT
 from eyeclick.events import EventType as E
@@ -30,6 +32,13 @@ class BlinkFSM:
         """Segundos que lleva cerrado (para la barra de progreso de la EyeView)."""
         return t - self.t0 if self.closed else 0.0
 
+    def reset(self, t):
+        """Olvida el cierre en curso (p. ej. al recalibrar); si no había terminado, lo cancela."""
+        if self.closed and self.stage != 3:
+            self.emit(EyeEvent(E.CANCELLED, t, t - self.t0))
+        self.closed, self.stage = False, 0
+        self.streak, self.lost_frames = 0, 0
+
     def update(self, status, t):
         if status == "lost":
             self.lost_frames += 1
@@ -38,6 +47,8 @@ class BlinkFSM:
                     self.stage = 3
                     self.emit(EyeEvent(E.CANCELLED, t, t - self.t0))
                 self.emit(EyeEvent(E.EYE_LOST, t))
+            if self.closed:
+                self._tick(t)
             return
         self.lost_frames = 0
 

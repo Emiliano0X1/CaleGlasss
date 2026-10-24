@@ -5,7 +5,7 @@ Correr con:  python -m pytest
 TODO:
 - [ ] Agregar casos raros que salgan en la prueba con usuario.
 """
-from eyeclick.config import FRAMES_TO_CHANGE, LOST_FRAMES
+from eyeclick.config import CANCEL_AT, FRAMES_TO_CHANGE, LEFT_AT, LOST_FRAMES, MIN_BLINK, RIGHT_AT
 from eyeclick.events import EventType as E
 from eyeclick.logic.blink_fsm import BlinkFSM
 
@@ -55,3 +55,35 @@ def test_lost_con_ojo_cerrado_cancela():
     assert E.CANCELLED in events and E.EYE_LOST in events
     assert E.CLICK_LEFT not in events and E.CLICK_RIGHT not in events
     assert LOST_FRAMES == 5
+
+
+def test_umbrales_en_orden():
+    assert MIN_BLINK < LEFT_AT < RIGHT_AT < CANCEL_AT
+
+
+def test_entre_min_blink_y_left_at_no_hace_clic():
+    assert run((MIN_BLINK + LEFT_AT) / 2) == [E.EYE_CLOSED, E.CANCELLED]
+
+
+def test_lost_corto_con_ojo_cerrado_sigue_contando():
+    events = []
+    fsm = BlinkFSM(events.append)
+    # cerrado 0.47 s, luego LOST_FRAMES - 1 frames 'lost' que cruzan los 0.5 s, luego cerrado
+    seq = ["open"] * 15 + ["closed"] * 14 + ["lost"] * (LOST_FRAMES - 1) + ["closed"] * 10 + ["open"] * 15
+    for i, s in enumerate(seq):
+        fsm.update(s, i * DT)
+    assert [e.type for e in events] == [E.EYE_CLOSED, E.STAGE_LEFT, E.CLICK_LEFT]
+    lost_start, lost_end = 29 * DT, (29 + LOST_FRAMES - 1) * DT
+    assert lost_start <= events[1].t < lost_end     # STAGE_LEFT salió durante el 'lost'
+
+
+def test_reset_cancela_el_cierre_en_curso():
+    events = []
+    fsm = BlinkFSM(events.append)
+    for i, s in enumerate(["open"] * 5 + ["closed"] * 20):
+        fsm.update(s, i * DT)
+    fsm.reset(25 * DT)
+    for i, s in enumerate(["open"] * 15, start=26):
+        fsm.update(s, i * DT)
+    assert [e.type for e in events] == [E.EYE_CLOSED, E.STAGE_LEFT, E.CANCELLED]
+    assert fsm.closed_for(41 * DT) == 0.0
