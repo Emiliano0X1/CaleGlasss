@@ -1,17 +1,17 @@
-"""Cliente del web trigger `glasses` de forge-app.  (bridge)
+"""Client for forge-app's `glasses` web trigger.  (bridge)
 
-Manda lo que dijo la persona a forge-app/src/triggers/glasses.ts:
-    send_request(texto)          -> un pedido nuevo ("crea un ticket para...")
-    send_approval(plan_id, sí/no) -> aprobar o rechazar un plan pendiente
+Sends what the wearer said to forge-app/src/triggers/glasses.ts:
+    send_request(text)               -> a new request ("create a ticket for...")
+    send_approval(plan_id, yes/no)   -> approve or reject a pending plan
 
-La URL del web trigger la da `forge webtrigger` después de `forge install`;
-se lee de la variable de entorno FORGE_WEBTRIGGER_URL (no va en el repo).
+The web trigger URL comes from `forge webtrigger create` after `forge install`;
+it's read from the FORGE_WEBTRIGGER_URL environment variable (not in the repo).
 
 TODO (bridge):
-- [ ] Definir el JSON con forge-app (mismo formato que espera triggers/glasses.ts).
-- [ ] POST con timeout y reintento corto; nunca bloquear el hilo principal.
-- [ ] Devolver el id del pedido para que live_state.py lo siga.
-- [ ] Error claro si falta FORGE_WEBTRIGGER_URL.
+- [ ] Agree on the JSON with forge-app (same format triggers/glasses.ts expects).
+- [ ] POST with a timeout and a short retry; never block the main thread.
+- [ ] Return the request id so live_state.py can follow it.
+- [ ] Clear error if FORGE_WEBTRIGGER_URL is missing.
 """
 import logging
 import os
@@ -28,11 +28,11 @@ class ForgeClient:
         self.timeout = timeout
 
     def send_request(self, text) -> str:
-        """Pedido por voz. Devuelve el id del pedido."""
+        """Voice request. Returns the request id."""
         # TODO (bridge)
         raise NotImplementedError
 
     def send_approval(self, plan_id, approved=True):
-        """Aprobación (o rechazo) de un plan desde los lentes."""
+        """Approval (or rejection) of a plan from the glasses."""
         # TODO (bridge)
         raise NotImplementedError

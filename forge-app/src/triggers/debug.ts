@@ -1,19 +1,19 @@
 /**
- * Web trigger `debug`: prueba que Forge puede leer Jira como app.
+ * `debug` web trigger: checks that Forge can read Jira as the app.
  *
- * Busca con JQL los issues de un sprint y devuelve el JSON de Jira tal cual
- * (summary, status, assignee, priority). Por defecto el Sprint 12 del seed
- * (scripts/demo_ids.txt); otro sprint con ?sprint=<id>, p. ej. ?sprint=5208.
+ * Searches a sprint's issues with JQL and returns Jira's JSON as-is
+ * (summary, status, assignee, priority). Defaults to the seed's Sprint 12
+ * (scripts/demo_ids.txt); another sprint with ?sprint=<id>, e.g. ?sprint=5208.
  *
  *   forge webtrigger create -f debug-webtrigger -s one-atlas-hyek.atlassian.net -p jira -e development
  *   curl "<URL>"                 # Sprint 12
  *   curl "<URL>?sprint=5208"     # Sprint 13
  *
- * Solo para depurar: cualquiera con la URL puede leer el sprint.
+ * Debugging only: anyone with the URL can read the sprint.
  *
- * TODO (agentes):
- * - [ ] Pasar la búsqueda a lib/jira.ts (searchIssues) cuando se implemente.
- * - [ ] Quitar este web trigger (o protegerlo con un token) antes del demo.
+ * TODO (agents):
+ * - [ ] Move the search to lib/jira.ts (searchIssues) once it's implemented.
+ * - [ ] Remove this web trigger (or protect it with a token) before the demo.
  */
 import api, { route } from '@forge/api';
 import type { WebTriggerRequest, WebTriggerResponse } from './glasses';
@@ -24,7 +24,7 @@ const FIELDS = 'summary,status,assignee,priority';
 export async function debug(request: WebTriggerRequest): Promise<WebTriggerResponse> {
   const sprint = request.queryParameters?.sprint?.[0] ?? DEFAULT_SPRINT;
   if (!/^\d+$/.test(sprint)) {
-    return json(400, { error: `sprint debe ser un número, llegó "${sprint}"` });
+    return json(400, { error: `sprint must be a number, got "${sprint}"` });
   }
 
   const jql = `sprint=${sprint}`;
@@ -36,7 +36,7 @@ export async function debug(request: WebTriggerRequest): Promise<WebTriggerRespo
 
   if (res.status === 401 || res.status === 403) {
     return json(res.status, {
-      hint: 'Falta un scope: agrégalo en manifest.yml, forge deploy y forge install --upgrade',
+      hint: 'A scope is missing: add it to manifest.yml, forge deploy and forge install --upgrade',
       jira: data,
     });
   }

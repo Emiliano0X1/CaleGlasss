@@ -1,20 +1,20 @@
 /**
- * Cliente de Claude (SDK oficial @anthropic-ai/sdk).
+ * Claude client (official @anthropic-ai/sdk).
  *
- * TODO (agentes):
+ * TODO (agents):
  * - [ ] npm install @anthropic-ai/sdk zod
- * - [ ] La API key va en una variable de entorno de Forge
- *       (`forge variables set --encrypt ANTHROPIC_API_KEY ...`), nunca en el repo.
- * - [ ] Crear el cliente: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).
- * - [ ] Fijar effort explícito (output_config.effort): en claude-opus-5-5 el default es 'medium'.
- * - [ ] Fallback por rechazo de seguridad: fallbacks: 'default' con el beta
- *       'server-side-fallback-2026-07-01'.
- * - [ ] Confirmar que api.anthropic.com está en permissions.external.fetch de manifest.yml.
+ * - [ ] The API key goes in a Forge environment variable
+ *       (`forge variables set --encrypt ANTHROPIC_API_KEY ...`), never in the repo.
+ * - [ ] Create the client: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).
+ * - [ ] Set effort explicitly (output_config.effort): on claude-opus-5-5 the default is 'medium'.
+ * - [ ] Safety-refusal fallback: fallbacks: 'default' with the
+ *       'server-side-fallback-2026-07-01' beta.
+ * - [ ] Make sure api.anthropic.com is in manifest.yml's permissions.external.fetch.
  */
 
 export const MODEL = 'claude-opus-5-5';
 
 export function getClient(): never {
-  // TODO (agentes)
+  // TODO (agents)
   throw new Error('TODO: lib/claude');
 }

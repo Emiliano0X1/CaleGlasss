@@ -9,7 +9,7 @@ const App = () => {
   }, []);
   return (
     <>
-      <Text>Hola desde CaleGlasss</Text>
+      <Text>Hello from CaleGlasss</Text>
       <Text>{data ? data : 'Loading...'}</Text>
     </>
   );

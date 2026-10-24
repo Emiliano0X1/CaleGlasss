@@ -1,19 +1,19 @@
-"""Estado en vivo desde SpacetimeDB -> overlay.  (bridge)
+"""Live state from SpacetimeDB -> overlay.  (bridge)
 
-Lee (o se suscribe a) el estado de los pedidos que escribe forge-app en stdb/
-y avisa cada cambio con on_update(texto). Corre en su propio hilo: NUNCA toca
-tkinter. Quien pase on_update (app.py) debe llevar el cambio al hilo principal,
-igual que hoy hace con las peticiones de pausa de F9, y ahí llamar overlay.show().
+Reads (or subscribes to) the request state that forge-app writes to stdb/
+and reports each change with on_update(text). Runs on its own thread: it NEVER
+touches tkinter. Whoever passes on_update (app.py) must hand the change to the main
+thread, the same way it already does with F9 pause requests, and call overlay.show() there.
 
-Ejemplos de lo que mostraría el overlay:
-    "Router: pensando..."  "Jira: creando ticket"  "¿Aprobar plan? (parpadeo)"  "Listo ✓"
+Examples of what the overlay would show:
+    "Router: thinking..."  "Jira: creating ticket"  "Approve plan? (blink)"  "Done ✓"
 
 TODO (bridge):
-- [ ] Elegir cliente de SpacetimeDB para Python (o leer por HTTP si no hay SDK).
-- [ ] Conectar a la base de stdb/ (host y nombre por variables de entorno).
-- [ ] Seguir solo los pedidos de estos lentes y traducir cada estado a un texto corto.
-- [ ] Reconectar si se cae la red, sin trabar la app.
-- [ ] stop(): cerrar la conexión y el hilo (lo llama app.py al salir).
+- [ ] Pick a SpacetimeDB client for Python (or read over HTTP if there's no SDK).
+- [ ] Connect to the stdb/ database (host and name from environment variables).
+- [ ] Follow only this pair of glasses' requests and turn each state into a short text.
+- [ ] Reconnect if the network drops, without stalling the app.
+- [ ] stop(): close the connection and the thread (app.py calls this on exit).
 """
 import logging
 import threading
@@ -26,17 +26,17 @@ DB_ENV = "STDB_DATABASE"
 
 class LiveState:
     def __init__(self, on_update):
-        """on_update(texto): se llama desde el hilo de LiveState."""
+        """on_update(text): called from LiveState's thread."""
         self.on_update = on_update
         self._running = False
         self._thread = None
 
     def start(self):
-        # TODO (bridge): conectar y lanzar self._loop en un hilo daemon
+        # TODO (bridge): connect and launch self._loop on a daemon thread
         raise NotImplementedError
 
     def stop(self):
-        # TODO (bridge): cerrar la conexión y esperar al hilo
+        # TODO (bridge): close the connection and wait for the thread
         self._running = False
 
     def _loop(self):

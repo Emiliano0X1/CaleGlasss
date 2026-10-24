@@ -1,12 +1,12 @@
 /**
- * Llamadas a la API REST de Confluence desde Forge (@forge/api, requestConfluence).
+ * Confluence REST API calls from Forge (@forge/api, requestConfluence).
  *
- * TODO (agentes):
- * - [ ] Lectura (la usa reporter.ts): getPage(id), searchPages(cql).
- * - [ ] Escritura (la usa execute/actions.ts): createPage(space, title, body), updatePage(id, body).
+ * TODO (agents):
+ * - [ ] Read (used by reporter.ts): getPage(id), searchPages(cql).
+ * - [ ] Write (used by execute/actions.ts): createPage(space, title, body), updatePage(id, body).
  */
 
 export async function getPage(id: string): Promise<unknown> {
-  // TODO (agentes)
+  // TODO (agents)
   throw new Error('TODO: lib/confluence');
 }

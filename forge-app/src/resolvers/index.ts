@@ -1,10 +1,10 @@
 /**
- * Resolver del panel de issue (src/frontend/index.jsx lo llama con invoke()).
- * Viene de la plantilla jira-issue-panel-ui-kit, pasado a TypeScript.
+ * Issue panel resolver (src/frontend/index.jsx calls it with invoke()).
+ * Comes from the jira-issue-panel-ui-kit template, converted to TypeScript.
  *
- * TODO (agentes):
- * - [ ] Cambiar 'getText' por lo que muestre el panel: estado de los pedidos de
- *       este issue leído de stdb (lib/stdb.ts).
+ * TODO (agents):
+ * - [ ] Replace 'getText' with what the panel should show: the state of this
+ *       issue's requests, read from stdb (lib/stdb.ts).
  */
 import Resolver from '@forge/resolver';
 

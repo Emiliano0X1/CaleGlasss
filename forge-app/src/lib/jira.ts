@@ -1,13 +1,13 @@
 /**
- * Llamadas a la API REST de Jira desde Forge (@forge/api, requestJira).
+ * Jira REST API calls from Forge (@forge/api, requestJira).
  *
- * TODO (agentes):
- * - [ ] Lectura (la usa jira_agent.ts): searchIssues(jql), getIssue(key), listTransitions(key).
- * - [ ] Escritura (la usa execute/actions.ts): createIssue, transitionIssue, addComment, assignIssue.
- * - [ ] Decidir asApp() o asUser() según quién debe aparecer como autor.
+ * TODO (agents):
+ * - [ ] Read (used by jira_agent.ts): searchIssues(jql), getIssue(key), listTransitions(key).
+ * - [ ] Write (used by execute/actions.ts): createIssue, transitionIssue, addComment, assignIssue.
+ * - [ ] Decide between asApp() and asUser() depending on who should appear as the author.
  */
 
 export async function searchIssues(jql: string): Promise<unknown[]> {
-  // TODO (agentes)
+  // TODO (agents)
   throw new Error('TODO: lib/jira');
 }

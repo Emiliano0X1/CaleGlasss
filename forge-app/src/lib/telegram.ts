@@ -1,14 +1,14 @@
 /**
- * Bot de Telegram: mandar mensajes y botones de aprobación.
+ * Telegram bot: send messages and approval buttons.
  *
- * TODO (agentes):
- * - [ ] El token del bot va en una variable de entorno de Forge (TELEGRAM_BOT_TOKEN).
- * - [ ] sendMessage(chatId, texto) y sendApprovalRequest(chatId, plan) con botón ✅ / ❌
- *       (inline_keyboard con callback_data = planId).
- * - [ ] answerCallbackQuery(id) para que el botón deje de cargar.
+ * TODO (agents):
+ * - [ ] The bot token goes in a Forge environment variable (TELEGRAM_BOT_TOKEN).
+ * - [ ] sendMessage(chatId, text) and sendApprovalRequest(chatId, plan) with ✅ / ❌ buttons
+ *       (inline_keyboard with callback_data = planId).
+ * - [ ] answerCallbackQuery(id) so the button stops loading.
  */
 
 export async function sendMessage(chatId: string, text: string): Promise<void> {
-  // TODO (agentes)
+  // TODO (agents)
   throw new Error('TODO: lib/telegram');
 }

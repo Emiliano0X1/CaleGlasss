@@ -1,13 +1,13 @@
 /**
- * Ejecuta un plan ya aprobado: una función por tipo de acción.
+ * Runs an approved plan: one function per action type.
  *
- * Solo aquí se cambian cosas en Jira, Confluence o Telegram. Cada acción escribe
- * su resultado en stdb ("Ticket PROJ-12 creado ✓") para el overlay y el dashboard.
+ * This is the only place where things change in Jira, Confluence or Telegram. Each
+ * action writes its result to stdb ("Ticket PROJ-12 created ✓") for the overlay and dashboard.
  *
- * TODO (agentes):
- * - [ ] Implementar cada acción con lib/jira.ts, lib/confluence.ts y lib/telegram.ts.
- * - [ ] Ejecutar en orden; si una falla, parar y marcar el plan como 'failed' con el error.
- * - [ ] No ejecutar dos veces el mismo plan (idempotencia por planId).
+ * TODO (agents):
+ * - [ ] Implement each action with lib/jira.ts, lib/confluence.ts and lib/telegram.ts.
+ * - [ ] Run them in order; if one fails, stop and mark the plan 'failed' with the error.
+ * - [ ] Never run the same plan twice (idempotent by planId).
  */
 
 export type ActionType =
@@ -32,6 +32,6 @@ export const actions: Record<ActionType, ActionHandler> = {
 };
 
 export async function executePlan(planId: string): Promise<void> {
-  // TODO (agentes)
+  // TODO (agents)
   throw new Error('TODO: execute/actions');
 }

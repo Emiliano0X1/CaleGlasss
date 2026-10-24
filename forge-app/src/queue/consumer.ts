@@ -1,19 +1,19 @@
 /**
- * Consumidor de la cola `agent-jobs`: un trabajo por paso, para no pasarse del
- * límite de tiempo de una función de Forge.
+ * Consumer of the `agent-jobs` queue: one job per step, so a Forge function
+ * never runs past its time limit.
  *
- *   { type: 'route',   requestId } -> agents/router.ts decide qué agente(s) y encola 'agent'
- *   { type: 'agent',   jobId }     -> corre jira_agent o reporter; deja un plan pendiente de aprobar
- *   { type: 'execute', planId }    -> execute/actions.ts aplica el plan aprobado
+ *   { type: 'route',   requestId } -> agents/router.ts picks the agent(s) and enqueues 'agent'
+ *   { type: 'agent',   jobId }     -> runs jira_agent or reporter; leaves a plan waiting for approval
+ *   { type: 'execute', planId }    -> execute/actions.ts applies the approved plan
  *
- * Cada paso escribe su estado en SpacetimeDB (lib/stdb.ts) para que el overlay de
- * los lentes (bridge/live_state.py) y el dashboard lo vean en vivo.
+ * Each step writes its state to SpacetimeDB (lib/stdb.ts) so the glasses overlay
+ * (bridge/live_state.py) and the dashboard see it live.
  *
- * TODO (agentes):
- * - [ ] Resolver de @forge/resolver con resolver.define('job', ...) (method `job` en manifest.yml)
- *       y exportarlo como `consumer = resolver.getDefinitions()`.
- * - [ ] Despachar por job.type; errores -> estado 'failed' en stdb, sin reintentos infinitos.
- * - [ ] Notificar por Telegram cuando un plan queda esperando aprobación.
+ * TODO (agents):
+ * - [ ] @forge/resolver resolver with resolver.define('job', ...) (method `job` in manifest.yml)
+ *       exported as `consumer = resolver.getDefinitions()`.
+ * - [ ] Dispatch on job.type; errors -> 'failed' state in stdb, no endless retries.
+ * - [ ] Notify through Telegram when a plan is waiting for approval.
  */
 
 export type Job =
@@ -22,9 +22,9 @@ export type Job =
   | { type: 'execute'; planId: string };
 
 export async function handleJob(job: Job): Promise<void> {
-  // TODO (agentes)
+  // TODO (agents)
   throw new Error(`TODO: queue/consumer (${job.type})`);
 }
 
-// TODO (agentes): reemplazar por resolver.getDefinitions() de @forge/resolver.
+// TODO (agents): replace with @forge/resolver's resolver.getDefinitions().
 export const consumer = async (event: { payload: Job }): Promise<void> => handleJob(event.payload);

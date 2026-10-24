@@ -1,21 +1,20 @@
-"""Voz -> texto con faster-whisper, local en la laptop.  (bridge)
+"""Speech -> text with faster-whisper, locally on the laptop.  (bridge)
 
-El modelo se carga una sola vez (tarda unos segundos) y luego transcribe cada
-grabación. Se llama desde el hilo de trabajo de listener.py, nunca desde el
-hilo principal.
+The model is loaded once (takes a few seconds) and then transcribes each
+recording. Called from listener.py's worker thread, never from the main thread.
 
 TODO (bridge):
-- [ ] Agregar faster-whisper a requirements.txt.
-- [ ] Cargar WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8") en load().
-- [ ] transcribe(audio): audio float32 mono a 16 kHz -> texto (language=LANGUAGE).
-- [ ] Medir la latencia en la laptop del demo; si es lenta, bajar a "tiny" o "base".
+- [ ] Add faster-whisper to requirements.txt.
+- [ ] Load WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8") in load().
+- [ ] transcribe(audio): float32 mono audio at 16 kHz -> text (language=LANGUAGE).
+- [ ] Measure latency on the demo laptop; if it's slow, drop to "tiny" or "base".
 """
 import logging
 
 log = logging.getLogger(__name__)
 
 MODEL_SIZE = "small"
-LANGUAGE = "es"
+LANGUAGE = "es"         # language the wearer speaks; None = auto-detect
 
 
 class Transcriber:
@@ -25,9 +24,9 @@ class Transcriber:
         self._model = None
 
     def load(self):
-        # TODO (bridge): from faster_whisper import WhisperModel (aquí, no arriba)
+        # TODO (bridge): from faster_whisper import WhisperModel (here, not at the top)
         raise NotImplementedError
 
     def transcribe(self, audio) -> str:
-        # TODO (bridge): if self._model is None: self.load(); unir los segmentos en un texto
+        # TODO (bridge): if self._model is None: self.load(); join the segments into one text
         raise NotImplementedError

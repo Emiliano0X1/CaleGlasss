@@ -138,7 +138,7 @@ Names are in English: the plan's `lentes.ts` is `glasses.ts` and `reportero.ts` 
 git grep -n "TODO (SWE 1)"
 git grep -n "TODO (SWE 2)"
 git grep -n "TODO (bridge)"     # eyeclick/bridge/
-git grep -n "TODO (agentes)"    # forge-app/
+git grep -n "TODO (agents)"     # forge-app/, stdb/
 ```
 
 ## Event contract

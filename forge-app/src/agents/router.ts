@@ -1,25 +1,25 @@
 /**
- * Router: lee el pedido y decide qué agente(s) lo atienden.
+ * Router: reads the request and decides which agent(s) handle it.
  *
- *   "crea un ticket / mueve el issue / ..."   -> jira_agent
- *   "haz un resumen / reporte del sprint ..." -> reporter
- *   pedido ambiguo                            -> pedir aclaración (Telegram / overlay)
+ *   "create a ticket / move the issue / ..."   -> jira_agent
+ *   "write a summary / sprint report ..."      -> reporter
+ *   ambiguous request                          -> ask for clarification (Telegram / overlay)
  *
- * TODO (agentes):
- * - [ ] Una sola llamada a Claude (lib/claude.ts) con salida estructurada
- *       (output_config.format) que devuelva { agents: [...], tasks: [...] }.
- * - [ ] Crear un trabajo { type: 'agent', jobId } por agente en la cola `agent-jobs`.
- * - [ ] Guardar la decisión en stdb para mostrarla ("Router: Jira").
+ * TODO (agents):
+ * - [ ] A single Claude call (lib/claude.ts) with structured output
+ *       (output_config.format) that returns { agents: [...], tasks: [...] }.
+ * - [ ] Create one { type: 'agent', jobId } job per agent on the `agent-jobs` queue.
+ * - [ ] Save the decision to stdb so it shows up ("Router: Jira").
  */
 
 export type AgentName = 'jira' | 'reporter';
 
 export interface RouteDecision {
   agents: { agent: AgentName; task: string }[];
-  clarification?: string;   // si el pedido no es claro
+  clarification?: string;   // when the request isn't clear
 }
 
 export async function route(requestText: string): Promise<RouteDecision> {
-  // TODO (agentes)
+  // TODO (agents)
   throw new Error('TODO: agents/router');
 }

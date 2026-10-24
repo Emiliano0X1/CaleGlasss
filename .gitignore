@@ -12,3 +12,4 @@ calib.json
 node_modules/
 .forge/
 .env
+stdb/spacetimedb/dist/

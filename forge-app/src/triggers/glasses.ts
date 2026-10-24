@@ -1,20 +1,20 @@
 /**
- * Web trigger `glasses`: pedidos por voz y aprobaciones desde los lentes.
- * Lo llama eyeclick/bridge/forge_client.py con un POST.
+ * `glasses` web trigger: voice requests and approvals from the glasses.
+ * Called by eyeclick/bridge/forge_client.py with a POST.
  *
- * Cuerpo esperado (acordarlo con forge_client.py):
- *   { "kind": "request", "text": "crea un ticket para ..." }
+ * Expected body (agree on it with forge_client.py):
+ *   { "kind": "request", "text": "create a ticket for ..." }
  *   { "kind": "approval", "planId": "...", "approved": true }
  *
- * TODO (agentes):
- * - [ ] Validar el cuerpo y un token compartido (header) para que nadie más dispare la app.
- * - [ ] request: crear el pedido en SpacetimeDB (lib/stdb.ts) y encolar un trabajo
- *       { type: 'route', requestId } en la cola `agent-jobs` (@forge/events Queue).
- * - [ ] approval: marcar el plan como aprobado/rechazado y encolar { type: 'execute', planId }.
- * - [ ] Responder rápido (200 con el requestId); el trabajo pesado va por la cola.
+ * TODO (agents):
+ * - [ ] Validate the body and a shared token (header) so nobody else can trigger the app.
+ * - [ ] request: create the request in SpacetimeDB (lib/stdb.ts) and enqueue a job
+ *       { type: 'route', requestId } on the `agent-jobs` queue (@forge/events Queue).
+ * - [ ] approval: mark the plan approved/rejected and enqueue { type: 'execute', planId }.
+ * - [ ] Answer fast (200 with the requestId); the heavy work goes through the queue.
  */
 
-// TODO: reemplazar por los tipos de web trigger de Forge si el SDK los exporta.
+// TODO: replace with Forge's web trigger types if the SDK exports them.
 export interface WebTriggerRequest {
   body: string;
   headers: Record<string, string[]>;
@@ -28,6 +28,6 @@ export interface WebTriggerResponse {
 }
 
 export async function glasses(request: WebTriggerRequest): Promise<WebTriggerResponse> {
-  // TODO (agentes)
+  // TODO (agents)
   throw new Error('TODO: triggers/glasses');
 }

@@ -1,20 +1,20 @@
 /**
- * Agente reportero: prompt y herramientas.
+ * Reporter agent: prompt and tools.
  *
- * Junta información de Jira (y Confluence) y propone un reporte: resumen del
- * sprint, estado de un epic, pendientes de una persona, etc.
- *   Lectura: search_issues, get_page
- *   En el plan: create_page / update_page en Confluence, send_message por Telegram
+ * Gathers information from Jira (and Confluence) and proposes a report: sprint
+ * summary, status of an epic, someone's pending work, etc.
+ *   Read: search_issues, get_page
+ *   In the plan: create_page / update_page in Confluence, send_message through Telegram
  *
- * TODO (agentes):
- * - [ ] System prompt: formato del reporte, tono y longitud.
- * - [ ] Herramientas con betaZodTool que llamen a lib/jira.ts y lib/confluence.ts.
- * - [ ] Exportar el AgentSpec para agents/loop.ts.
+ * TODO (agents):
+ * - [ ] System prompt: report format, tone and length.
+ * - [ ] Tools with betaZodTool that call lib/jira.ts and lib/confluence.ts.
+ * - [ ] Export the AgentSpec for agents/loop.ts.
  */
 import type { AgentSpec } from './loop';
 
 export const reporterAgent: AgentSpec = {
   name: 'reporter',
-  system: 'TODO: prompt del reportero',
+  system: 'TODO: reporter prompt',
   tools: [],   // TODO
 };

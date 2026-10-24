@@ -1,10 +1,10 @@
-"""glasses-bridge: voz + agentes, en el mismo proceso que EyeClick.
+"""glasses-bridge: voice + agents, in the same process as EyeClick.
 
-    listener.py      -> suscriptor del bus; el gesto de parpadeo prende/apaga el micrófono
-    stt.py           -> audio -> texto con faster-whisper (local)
-    forge_client.py  -> POST del texto al web trigger `glasses` de forge-app
-    live_state.py    -> lee el estado en SpacetimeDB y actualiza el overlay
+    listener.py      -> bus subscriber; the blink gesture turns the microphone on/off
+    stt.py           -> audio -> text with faster-whisper (local)
+    forge_client.py  -> POSTs the text to forge-app's `glasses` web trigger
+    live_state.py    -> reads the state in SpacetimeDB and updates the overlay
 
-Nada de esto bloquea el hilo principal: grabar, transcribir, enviar y leer
-SpacetimeDB corren en sus propios hilos (ver README, "Agent team").
+None of this blocks the main thread: recording, transcribing, sending and reading
+SpacetimeDB run on their own threads (see README, "Agent team").
 """
