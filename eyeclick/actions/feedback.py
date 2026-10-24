@@ -9,7 +9,9 @@ Los sonidos se definen en SOUNDS y se generan una sola vez al crear Feedback.
 "Dónde suena" está aparte (SpeakerOutput): para usar el buzzer del ESP32 basta
 con otra clase que tenga play(samples) y pasarla en Feedback(output=...).
 
-sounddevice.play no bloquea, así que el bip no frena el procesamiento; un bip
+SpeakerOutput abre UN stream de audio al empezar y lo deja abierto: play() solo
+cambia el buffer que lee el callback, así que no bloquea (sd.play abría un stream
+nuevo en cada bip y congelaba el hilo principal 200-400 ms en Windows). Un bip
 nuevo corta al anterior. Si no hay dispositivo de audio, se avisa una vez en el
 log y Feedback se queda callado en lugar de fallar en cada evento.
 
@@ -19,6 +21,7 @@ TODO (SWE 2):
 - [ ] Esp32Output: mandar el bip al buzzer de los lentes (misma interfaz play()).
 """
 import logging
+import threading
 
 import numpy as np
 
@@ -61,17 +64,31 @@ def _build(spec):
 
 
 class SpeakerOutput:
-    """Bocinas de la laptop con sounddevice."""
+    """Bocinas de la laptop con sounddevice, con un stream que queda abierto."""
 
     def __init__(self):
         import sounddevice as sd    # aquí y no arriba: las pruebas no necesitan audio
-        self.sd = sd
+        self._lock = threading.Lock()
+        self._buf, self._pos = np.zeros(0, np.float32), 0
+        self._stream = sd.OutputStream(samplerate=SR, channels=1, dtype="float32",
+                                       callback=self._callback)
+        self._stream.start()
+
+    def _callback(self, outdata, frames, time_info, status):
+        # hilo de audio: copiar lo que toca del bip actual y rellenar con silencio
+        with self._lock:
+            chunk = self._buf[self._pos:self._pos + frames]
+            self._pos += len(chunk)
+        outdata[:len(chunk), 0] = chunk
+        outdata[len(chunk):] = 0
 
     def play(self, samples):
-        self.sd.play(samples, SR)
+        with self._lock:
+            self._buf, self._pos = samples, 0
 
     def stop(self):
-        self.sd.stop()
+        self._stream.stop()
+        self._stream.close()
 
 
 class Feedback:

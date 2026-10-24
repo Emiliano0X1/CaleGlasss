@@ -10,12 +10,14 @@ El monitor (SWE 2) solo la muestra.
     mask   -> miniatura de la imagen binaria (el monitor la muestra u oculta)
 
 Es rápido: reduce primero (cv2.resize ya es la copia) y dibuja sobre la imagen
-reducida, escalando las coordenadas del contorno.
+reducida, escalando las coordenadas del contorno (vienen en la resolución de
+trabajo del detector, detector.work_size).
 """
 import cv2
 import numpy as np
 
 from eyeclick.config import VIEW_H, VIEW_W
+from eyeclick.vision.detector import work_size
 
 GREEN, YELLOW, RED = (0, 200, 0), (0, 200, 255), (0, 0, 220)   # BGR
 WHITE, BLACK = (255, 255, 255), (0, 0, 0)
@@ -31,7 +33,7 @@ def annotate(frame, state, calib):
         view = np.zeros((VIEW_H, VIEW_W, 3), np.uint8)
         scale = np.array([1.0, 1.0], np.float32)
     else:
-        h, w = frame.shape[:2]
+        w, h = work_size(frame.shape)
         scale = np.array([VIEW_W / w, VIEW_H / h], np.float32)
         view = cv2.resize(frame, (VIEW_W, VIEW_H), interpolation=cv2.INTER_AREA)
         if view.ndim == 2:

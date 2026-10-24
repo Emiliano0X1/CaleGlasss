@@ -2,10 +2,15 @@
 
 Ojo abierto: piel clara, iris gris y pupila negra grande (la cámara está a 2-3 cm).
 Ojo cerrado: piel con sombra y una línea delgada de pestañas.
+Ceja: mancha oscura y redonda muy por encima del ojo (no debe contar como ojo abierto).
 Imagen plana: lo que se ve con la cámara tapada o sin señal.
+
+El detector trabaja a la mitad de resolución (detector.WORK_W = 320): las áreas
+y coordenadas que devuelve están en esa escala (WORK).
 """
 import math
 import time
+from dataclasses import replace
 
 import cv2
 import numpy as np
@@ -21,10 +26,11 @@ from eyeclick.vision.pipeline import PipelineSource
 
 H, W = 480, 640
 PUPIL_R = 80
+WORK = detector.WORK_W / W
 DT = 1 / 30
 
 
-def _eye(is_open, seed):
+def _eye(is_open, seed, brow=False):
     rng = np.random.default_rng(seed)
     img = np.tile(np.linspace(140, 190, W), (H, 1))            # piel con sombra
     if is_open:
@@ -33,23 +39,28 @@ def _eye(is_open, seed):
         cv2.circle(img, (W // 2 + 30, H // 2 - 30), 8, 250, -1)  # reflejo del LED
     else:
         cv2.line(img, (100, H // 2), (W - 100, H // 2 + 20), 60, 3)  # pestañas
+    if brow:
+        cv2.ellipse(img, (W // 2, 40), (110, 60), 0, 0, 360, 25, -1)   # ceja
     img += rng.normal(0, 6, img.shape)
     return cv2.cvtColor(np.clip(img, 0, 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
 
 
 OPEN = [_eye(True, s) for s in range(4)]
 CLOSED = [_eye(False, s) for s in range(4)]
+BROW = _eye(False, 0, brow=True)
 FLAT = np.full((H, W, 3), 128, np.uint8)
 
 
-def _calibrate():
+def _calibrate(closed=CLOSED):
+    """Alimenta las dos fases y espera el cálculo (corre en otro hilo)."""
     cal = Calibrator()
     t, i = 0.0, 0
-    while not cal.done:
+    while cal.message != calibration.WORKING_MSG:
         phase_open = t < calibration.READY_SECONDS + calibration.OPEN_SECONDS
-        cal.feed((OPEN if phase_open else CLOSED)[i % 4], t)
+        cal.feed((OPEN if phase_open else closed)[i % len(closed)], t)
         t, i = t + DT, i + 1
         assert t < 20, "la calibración no termina"
+    assert cal.wait(10)
     return cal
 
 
@@ -61,21 +72,66 @@ def calib():
 
 
 def test_find_pupil_encuentra_la_pupila():
-    contour, area, gray, mask = detector.find_pupil(OPEN[0], 60, 200, 100000)
+    contour, area, gray, mask = detector.find_pupil(OPEN[0], 60)
     assert contour is not None
-    assert area == pytest.approx(math.pi * PUPIL_R ** 2, rel=0.1)
-    assert gray.shape == (H, W) and mask.shape == (H, W)
+    assert area == pytest.approx(math.pi * (PUPIL_R * WORK) ** 2, rel=0.1)
+    assert gray.shape == (H * WORK, W * WORK) and mask.shape == gray.shape
 
 
 def test_find_pupil_ignora_las_pestanas():
-    contour, area, _, _ = detector.find_pupil(CLOSED[0], 80, 200, 100000)
+    contour, area, _, _ = detector.find_pupil(CLOSED[0], 80)
     assert contour is None and area == 0
 
 
+def test_find_pupil_con_reflejo_mide_toda_la_pupila():
+    # el reflejo del LED queda adentro de la pupila: se rellena y no la parte
+    contour, area, _, _ = detector.find_pupil(OPEN[0], 60)
+    assert area > 0.95 * math.pi * (PUPIL_R * WORK) ** 2
+
+
 def test_calibracion(calib):
-    assert 25 < calib.thr < 110                       # entre la pupila y el iris
-    assert calib.open_area == pytest.approx(math.pi * PUPIL_R ** 2, rel=0.15)
+    assert 25 < calib.thr < 140                       # sobre la pupila, bajo la piel
+    assert calib.cx == pytest.approx(W * WORK / 2, abs=3)
+    assert calib.cy == pytest.approx(H * WORK / 2, abs=3)
+    assert calib.ref_level > 0
     assert 0 < calib.min_std < calib.closed_std < calib.open_std
+
+
+def test_calibracion_elige_el_umbral_alto_con_margen(monkeypatch):
+    # hasta 30 el ojo cerrado se ve cerrado; desde 31 se ve abierto -> 30 menos el margen
+    def fake(thr, ref, opened, closed):
+        closed_rate = 0.0 if thr <= 30 else 0.9
+        return 1.0 - closed_rate, Calibration(thr=thr), 1.0, closed_rate
+    monkeypatch.setattr(Calibrator, "_try", staticmethod(fake))
+    gray = np.tile(np.arange(10, 70, dtype=np.uint8), (60, 1))     # percentil 1 ~10, mediana ~40
+    result = Calibrator()._compute([gray], [gray])
+    assert result.thr == 30 - calibration.SAFETY_STEPS
+
+
+def test_calibracion_sin_umbral_que_separe_usa_el_centro(monkeypatch):
+    scores = {thr: 0.5 for thr in range(10, 40)}
+    scores[12] = 0.7                                               # pico suelto: ruido
+    fake = lambda thr, ref, opened, closed: (scores.get(thr, 0.0), Calibration(thr=thr), 0.9, 0.4)  # noqa: E731
+    monkeypatch.setattr(Calibrator, "_try", staticmethod(fake))
+    gray = np.tile(np.arange(10, 70, dtype=np.uint8), (60, 1))
+    assert 20 <= Calibrator()._compute([gray], [gray]).thr <= 30
+
+
+def test_ceja_no_cuenta_como_ojo_abierto(calib):
+    assert detector.classify(BROW, calib).status == "closed"
+    sin_filtro = replace(calib, cx=-1.0, cy=-1.0)
+    assert detector.classify(BROW, sin_filtro).status == "open"      # sin el filtro, sí la tomaría
+
+
+def test_contorno_dibujado_no_incluye_pestanas(calib):
+    top_limpio = detector.classify(OPEN[0], calib).contour.reshape(-1, 2)[:, 1].min()
+    img = OPEN[0].copy()
+    cv2.rectangle(img, (W // 2 - 30, 10), (W // 2 + 30, H // 2), (25, 25, 25), -1)   # pestañas pegadas arriba
+    st = detector.classify(img, calib)
+    assert st.status == "open"
+    r = math.sqrt(calib.open_area / math.pi)
+    # sin el recorte subiría hasta y=5; con él, a lo sumo (REFINE - 1) radios sobre el iris
+    assert st.contour.reshape(-1, 2)[:, 1].min() >= top_limpio - (detector.REFINE - 1) * r - 2
 
 
 def test_calibracion_mensajes():
@@ -88,11 +144,7 @@ def test_calibracion_mensajes():
 
 
 def test_calibracion_sin_cerrar_el_ojo_avisa():
-    cal = Calibrator()
-    t = 0.0
-    while not cal.done:
-        cal.feed(OPEN[int(t * 30) % 4], t)            # nunca cierra el ojo
-        t += DT
+    cal = _calibrate(closed=OPEN)                      # nunca cierra el ojo
     assert "cerrado" in cal.warning
 
 
@@ -103,12 +155,14 @@ def test_calibration_guarda_y_carga(tmp_path, calib):
     assert Calibration.load(tmp_path / "no_existe.json") is None
     (tmp_path / "roto.json").write_text("{nope")
     assert Calibration.load(tmp_path / "roto.json") is None
+    (tmp_path / "viejo.json").write_text('{"thr": 20, "open_area": 16004.0, "min_std": 5.9}')
+    assert Calibration.load(tmp_path / "viejo.json") is None      # otras unidades: recalibrar
 
 
 def test_classify(calib):
     st = detector.classify(OPEN[1], calib)
     assert st.status == "open"
-    assert st.center == pytest.approx((W / 2, H / 2), abs=3)
+    assert st.center == pytest.approx((W * WORK / 2, H * WORK / 2), abs=3)
     assert detector.classify(CLOSED[1], calib).status == "closed"
     assert detector.classify(FLAT, calib).status == "lost"
     assert detector.classify(None, calib).status == "lost"
@@ -203,6 +257,8 @@ def test_pipeline_recalibrar_no_hace_clics(tmp_path, calib):
     ready = calibration.READY_SECONDS
     t = _feed(p, [(round((ready + calibration.OPEN_SECONDS) / DT) + 2, "open"),
                   (round((ready + calibration.CLOSED_SECONDS) / DT) + 2, "closed")], t)
+    assert p._calibrator.wait(10)                     # el cálculo corre en otro hilo
+    t = _feed(p, [(1, "closed")], t)
     assert [e.type for e in events[n:]] == [E.CALIBRATED]
     assert p.latest_view().message == "Calibrado"
     _feed(p, [(30, "closed"), (15, "open")], t)       # sigue cerrado tras calibrar: sin clic
@@ -289,3 +345,27 @@ def test_video_file_source(tmp_path):
 def test_video_inexistente():
     with pytest.raises(RuntimeError):
         VideoFileSource("no_existe.mp4").start()
+
+
+def test_iris_pegado_a_pestanas_gruesas_sigue_abierto(calib):
+    # el párpado tapa la parte de arriba del iris y la línea de pestañas se pega al blob
+    img = OPEN[0].copy()
+    cv2.line(img, (W // 2 - 230, H // 2 - 70), (W // 2 + 230, H // 2 - 70), (25, 25, 25), 26)
+    assert detector.classify(img, calib).status == "open"
+
+
+def test_sombra_en_la_esquina_no_se_rescata(calib):
+    img = CLOSED[0].copy()
+    # sombra de la esquina: mancha del tamaño del iris lejos del centro, con una cola larga
+    cv2.circle(img, (130, H // 2), 75, (25, 25, 25), -1)
+    cv2.line(img, (130, H // 2 + 40), (600, H // 2 + 40), (25, 25, 25), 46)
+    assert detector._circularity(*_biggest_blob(img, calib)) < detector.MIN_CIRCULARITY  # no es redonda
+    assert detector.classify(img, calib).status == "closed"
+
+
+def _biggest_blob(img, calib):
+    gray = detector.preprocess(img)
+    _, mask = cv2.threshold(gray, detector.effective_thr(calib.thr, gray, calib.ref_level), 255, cv2.THRESH_BINARY_INV)
+    cs, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    c = max(cs, key=cv2.contourArea)
+    return c, cv2.contourArea(c)
