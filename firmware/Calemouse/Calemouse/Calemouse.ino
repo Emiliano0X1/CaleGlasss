@@ -666,6 +666,14 @@ void checkShake() {
     }
 }
 
+// Eje Y invertido de fábrica para este montaje (fijo en el código: no depende de lo
+// guardado ni de "Valores de fábrica"). El interruptor "Invertir Y" lo vuelve a voltear.
+const bool BASE_INVERT_Y = true;
+
+bool invertY() {
+    return BASE_INVERT_Y != cfg.invY;
+}
+
 float tiltSpeed(float deg, bool inv) {
     float a = fabs(deg);
     if (a < cfg.dead) return 0;
@@ -769,12 +777,12 @@ void loop() {
             float mx = cfg.swap ? dPit : dYaw;
             float my = cfg.swap ? dYaw : dPit;
             vx = (cfg.invX ? -mx : mx) * cfg.gain;
-            vy = (cfg.invY ? -my : my) * cfg.gain;
+            vy = (invertY() ? -my : my) * cfg.gain;
         } else {
             float tx = cfg.swap ? sp : sr;
             float ty = cfg.swap ? sr : sp;
             vx = tiltSpeed(tx, cfg.invX);
-            vy = tiltSpeed(ty, cfg.invY);
+            vy = tiltSpeed(ty, invertY());
         }
         dYaw = dPit = 0;
         accX += vx;
