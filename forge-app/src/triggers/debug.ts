@@ -16,7 +16,7 @@
  * - [ ] Remove this web trigger (or protect it with a token) before the demo.
  */
 import api, { route } from '@forge/api';
-import type { WebTriggerRequest, WebTriggerResponse } from './glasses';
+import { json, type WebTriggerRequest, type WebTriggerResponse } from '../lib/webtrigger';
 
 const DEFAULT_SPRINT = '5207';   // Sprint 12 (scripts/demo_ids.txt)
 const FIELDS = 'summary,status,assignee,priority';
@@ -41,12 +41,4 @@ export async function debug(request: WebTriggerRequest): Promise<WebTriggerRespo
     });
   }
   return json(res.status, data);
-}
-
-function json(statusCode: number, body: unknown): WebTriggerResponse {
-  return {
-    statusCode,
-    headers: { 'Content-Type': ['application/json'] },
-    body: JSON.stringify(body),
-  };
 }

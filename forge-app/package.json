@@ -17,6 +17,7 @@
   "dependencies": {
     "@forge/api": "^8.3.0",
     "@forge/bridge": "7.2.1-next.0",
+    "@forge/events": "^3.0.8",
     "@forge/react": "12.3.2-next.0",
     "@forge/resolver": "2.0.1",
     "react": "^18.2.0"

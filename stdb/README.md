@@ -14,14 +14,30 @@ Created with `spacetime init --lang typescript --server-only`. The module is in
 | Table | Columns |
 |---|---|
 | `work_items` | `id` (PK), `type`, `text`, `status`, `claimed_by`, `request_id` (unique), `depends_on`, `created_at` |
-| `proposals` | `id` (PK, auto), `work_id`, `agent`, `summary`, `actions` (JSON as text), `status`, `approved_by`, `approved_via` |
+| `proposals` | `id` (PK, text: the ✅ button sends `ap:<id>`), `work_id`, `agent`, `summary`, `actions` (JSON as text), `status`, `approved_by`, `approved_via` |
 | `events` | `id` (PK, auto), `date`, `actor`, `text` |
+| `people` | `id` (PK, what the glasses send as `person`), `name`, `telegram_chat_id`, `atlassian_account_id` |
+| `agents` | `name` (PK), `status`, `work_id`, `last_seen` (last heartbeat) |
+| `actions` | `id` (PK, auto), `proposal_id`, `type`, `target` (issue key), `before`, `after`, `date`: one row per change made in Jira |
 
 ## Reducers
 
 - `create_work(id, type, text, request_id, depends_on)`: creates a work item with `status = 'pending'`.
   If a work item with that `request_id` already exists, it does nothing, so forge-app can retry without duplicating.
 - `log_event(actor, text)`: appends to `events`.
+- `register_person(id, name, telegram_chat_id, atlassian_account_id)`: creates or updates a person.
+- `heartbeat(agent, status, work_id)`: the agent's current state (one row per agent).
+- `claim_work(work_id, agent)`: sets `claimed_by` and `status = 'claimed'`. Fails if another agent has it or its `depends_on` isn't `done`; the same agent claiming again is fine.
+- `submit_proposal(id, work_id, agent, summary, actions)`: saves the plan as `pending` (nothing is executed) and sets the work item to `proposed`. Only the agent that claimed it can submit; resubmitting a pending proposal replaces it.
+
+- `approve_proposal(id, person, via)`: only a `pending` proposal; otherwise it fails with `already approved by ...`.
+- `start_execution(id)`: only `approved` → `executing`, so the same plan never runs twice.
+- `record_action(proposal_id, type, target, before, after)`: one change made in Jira (the proposal must be `executing`).
+- `complete_proposal(id)`: the proposal and its work item become `done` (this unblocks `depends_on`).
+- `fail_proposal(id, error)`: an action failed halfway; proposal and work item become `failed`, the error goes to `events`.
+
+Work item status: `pending` → `claimed` → `proposed` → `approved` → `executing` → `done` (or `failed`).
+Proposal status: `pending` → `approved` → `executing` → `done` (or `failed`).
 
 ## Usage
 
@@ -69,5 +85,5 @@ On Windows the installer puts `spacetime.exe` in `%LOCALAPPDATA%\SpacetimeDB`; o
 
 ## TODO
 
-- [ ] Reducers for the rest of the flow: `claim_work`, `set_work_status`, `create_proposal`, `approve_proposal`.
+- [ ] A status for work items the agent couldn't make a plan for (today they stay `claimed`).
 - [ ] Decide who may call the reducers (today anyone who knows the database name).

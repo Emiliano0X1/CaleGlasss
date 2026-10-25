@@ -237,7 +237,25 @@ curl -X POST "<URL>" -H "x-secret: <APPROVAL_SECRET>" -H "Content-Type: applicat
      -d '{"type":"request","text":"move the pending items","person":"me","request_id":"r2"}'
 ```
 
-`forge tunnel` runs the code on your machine, where encrypted variables don't exist. Export them with the `FORGE_USER_VAR_` prefix before starting it (`FORGE_USER_VAR_STDB_TOKEN`, `FORGE_USER_VAR_APPROVAL_SECRET`), or stop the tunnel to hit the deployed version.
+After the receipt, `glasses` pushes `{ type: "agent", work_id, person }` to the **`agent-runs`** queue and answers (≈0.6 s warm; the first call after a deploy takes ~3 s while the function cold-starts). The queue consumer (`src/queue/consumer.ts`, function `consume-queue`) claims the work item and runs the Jira agent (`src/agents/jira_agent.ts`, Claude `claude-sonnet-5-5`): it reads Jira and sends the plan to Telegram as a numbered list with a **✅ Approve** button, without changing anything. In `forge logs` the trigger's lines come first, then `consumer: ...`. If the consumer never runs, check that `queue:` in `manifest.yml` matches `QUEUE_KEY` in `consumer.ts`.
+
+Tapping ✅ (`ap:<proposal id>`) hits the `telegram` trigger: `approve_proposal` in stdb (a second tap answers "Already approved" and queues nothing), the message changes to "Approved, executing…", and `{ type: "execute", proposal_id }` goes to the same queue. The consumer then runs `start_execution`, applies each action in Jira (`src/execute/actions.ts`, one `record_action` row per change), `complete_proposal`, and sends `✅ Done` with each change and its `/browse/KEY` link. A 403 from Jira means a missing write scope (`write:jira-work`, `write:sprint:jira-software`); a 400, a wrong request body.
+
+The agent really changes the demo board, so restore it between rehearsals:
+
+```bash
+cd scripts
+python demo_reset.py save      # once, with the demo as it should be (writes demo_snapshot.json)
+python demo_reset.py restore   # sprint, status, assignee, priority back; new comments deleted
+```
+
+`forge tunnel` runs the code on your machine, where encrypted variables don't exist. Export them with the `FORGE_USER_VAR_` prefix before starting it, or stop the tunnel to hit the deployed version:
+
+```powershell
+cd forge-app
+Get-Content ..\stdb\.env, .env | Where-Object { $_ -match '^(STDB_TOKEN|APPROVAL_SECRET|TELEGRAM_BOT_TOKEN|TELEGRAM_SECRET|ANTHROPIC_API_KEY)=' } | ForEach-Object { $k, $v = $_ -split '=', 2; Set-Item "env:FORGE_USER_VAR_$k" $v }
+forge tunnel
+```
 
 `npm run typecheck` type-checks `src/`. Don't add `"noEmit"` to `tsconfig.json`: Forge's bundler reads it and `forge deploy` fails with "TypeScript emitted no output".
 

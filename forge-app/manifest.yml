@@ -1,14 +1,14 @@
 # Forge app manifest (Atlassian). Base: jira-issue-panel-ui-kit template.
 #
-# Active today: the issue panel (src/frontend/index.jsx + resolvers/index.ts), the
-# `debug` web trigger and the `glasses` web trigger (writes to SpacetimeDB). The rest of
-# the agents' modules are commented out below: they get enabled once their handlers are
-# implemented, so the app doesn't ask for unused scopes.
+# Active today: the issue panel (src/frontend/index.jsx + resolvers/index.ts), the web
+# triggers `debug`, `glasses` (writes to SpacetimeDB, sends the receipt, queues the agent)
+# and `telegram` (bot webhook, ✅ approvals), and the `agent-runs` queue consumer (Claude
+# proposes a plan; after approval, execute/actions.ts applies it in Jira).
 #
-# Secrets (encrypted Forge variables, never in the code): STDB_TOKEN, APPROVAL_SECRET.
+# Secrets (encrypted Forge variables, never in the code): STDB_TOKEN, APPROVAL_SECRET,
+# TELEGRAM_BOT_TOKEN, TELEGRAM_SECRET, ANTHROPIC_API_KEY.
 #
 # TODO (agents):
-# - [ ] When telegram and queue/ are implemented, uncomment their modules and functions.
 # - [ ] Adjust the scopes to what lib/jira.ts and lib/confluence.ts really use.
 # - [ ] Run `forge lint` and `forge deploy`; if the scopes change, `forge install --upgrade`.
 # - [ ] (extra) Module and resource for static/panel/ (Custom UI).
@@ -27,14 +27,12 @@ modules:
       function: debug
     - key: glasses-webtrigger          # requests from the glasses; called by eyeclick/bridge/forge_client.py
       function: glasses
-  #   - key: telegram-webtrigger         # Telegram bot webhook
-  #     function: telegram
-  # consumer:
-  #   - key: jobs-consumer
-  #     queue: agent-jobs                # router, agent and execute go through this queue
-  #     resolver:
-  #       function: consumer
-  #       method: job
+    - key: telegram-webtrigger         # Telegram bot webhook (registered with setWebhook)
+      function: telegram
+  consumer:
+    - key: agent-runs-consumer
+      queue: agent-runs                # same name as QUEUE_KEY in src/queue/consumer.ts
+      function: consume-queue
   function:
     - key: resolver
       handler: index.handler
@@ -42,10 +40,11 @@ modules:
       handler: index.debug
     - key: glasses
       handler: index.glasses
-    # - key: telegram
-    #   handler: index.telegram
-    # - key: consumer
-    #   handler: index.consumer
+    - key: telegram
+      handler: index.telegram
+    - key: consume-queue               # queue consumer: calls Claude, so it gets more time
+      handler: index.consume
+      timeoutSeconds: 300              # up to 15 Claude turns (agents/loop.ts)
 
 resources:
   - key: main
@@ -60,17 +59,19 @@ app:
 
 permissions:
   scopes:
-    - read:jira-work                   # JQL search (triggers/debug.ts)
+    - read:jira-work                   # JQL search, issues, transitions (lib/jira.ts)
+    - read:jira-user                   # find_person: user search (lib/jira.ts)
     - read:sprint:jira-software
     - read:board-scope:jira-software
+    - read:issue:jira-software         # GET /rest/agile/1.0/issue/{key} (readIssue: current sprint)
+    - write:jira-work                  # transition, assign, priority, comment (execute/actions.ts)
+    - write:sprint:jira-software       # move issues to a sprint (execute/actions.ts)
     # Enabled together with the agents' modules:
-    # - write:jira-work
     # - read:confluence-content.all
     # - write:confluence-content
   external:
     fetch:
       backend:
         - address: maincloud.spacetimedb.com   # SpacetimeDB (lib/stdb.ts)
-        # Enabled together with the agents' modules:
-        # - address: api.anthropic.com
-        # - address: api.telegram.org
+        - address: api.telegram.org            # Telegram bot (lib/telegram.ts)
+        - address: api.anthropic.com           # Claude (lib/claude.ts)
