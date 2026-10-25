@@ -5,7 +5,7 @@ Correr con:  python -m pytest
 TODO:
 - [ ] Agregar casos raros que salgan en la prueba con usuario.
 """
-from eyeclick.config import CANCEL_AT, FRAMES_TO_CHANGE, LEFT_AT, LOST_FRAMES, MIN_BLINK, RIGHT_AT
+from eyeclick.config import DRAG_AT, FRAMES_TO_CHANGE, LEFT_AT, LOST_FRAMES, MIN_BLINK, RIGHT_AT
 from eyeclick.events import EventType as E
 from eyeclick.logic.blink_fsm import BlinkFSM
 
@@ -36,8 +36,8 @@ def test_clic_derecho():
     assert run(1.5) == [E.EYE_CLOSED, E.STAGE_LEFT, E.STAGE_RIGHT, E.CLICK_RIGHT]
 
 
-def test_mas_de_3s_se_cancela():
-    assert run(4.0) == [E.EYE_CLOSED, E.STAGE_LEFT, E.STAGE_RIGHT, E.CANCELLED]
+def test_mas_de_3s_arrastra_hasta_abrir():
+    assert run(4.0) == [E.EYE_CLOSED, E.STAGE_LEFT, E.STAGE_RIGHT, E.STAGE_DRAG, E.DRAG_END]
 
 
 def test_frame_suelto_cerrado_no_cambia_estado():
@@ -58,7 +58,7 @@ def test_lost_con_ojo_cerrado_cancela():
 
 
 def test_umbrales_en_orden():
-    assert MIN_BLINK < LEFT_AT < RIGHT_AT < CANCEL_AT
+    assert MIN_BLINK < LEFT_AT < RIGHT_AT < DRAG_AT
 
 
 def test_entre_min_blink_y_left_at_no_hace_clic():
@@ -87,3 +87,34 @@ def test_reset_cancela_el_cierre_en_curso():
         fsm.update(s, i * DT)
     assert [e.type for e in events] == [E.EYE_CLOSED, E.STAGE_LEFT, E.CANCELLED]
     assert fsm.closed_for(41 * DT) == 0.0
+
+
+
+def _closed_then(tail, closed_s=4.0):
+    events = []
+    fsm = BlinkFSM(events.append)
+    seq = ["open"] * 5 + ["closed"] * round(closed_s / DT) + tail
+    for i, s in enumerate(seq):
+        fsm.update(s, i * DT)
+    return events, fsm, len(seq)
+
+
+def test_perder_el_ojo_arrastrando_suelta():
+    events, _, _ = _closed_then(["lost"] * (LOST_FRAMES + 3) + ["open"] * 10)
+    types = [e.type for e in events]
+    assert types[:4] == [E.EYE_CLOSED, E.STAGE_LEFT, E.STAGE_RIGHT, E.STAGE_DRAG]
+    assert types.count(E.DRAG_END) == 1 and E.CANCELLED not in types
+    assert types.index(E.DRAG_END) < types.index(E.EYE_LOST)
+
+
+def test_reset_arrastrando_suelta():
+    events, fsm, n = _closed_then([])
+    fsm.reset(n * DT)
+    assert [e.type for e in events][-1] == E.DRAG_END
+    assert events[-1].duration >= DRAG_AT
+
+
+def test_drag_end_trae_la_duracion():
+    events, _, _ = _closed_then(["open"] * 5, closed_s=3.6)
+    end = events[-1]
+    assert end.type == E.DRAG_END and abs(end.duration - 3.6) < 0.1

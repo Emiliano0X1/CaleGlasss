@@ -10,7 +10,12 @@ Pasos (cada fase empieza con READY_SECONDS para reaccionar al mensaje, sin guard
        abierto, un paso más abajo (_pick). Medido en ojo.mp4 y ojo2.mp4: el error típico
        fuera de la calibración es "cerrado" con el ojo abierto, y un umbral alto lo evita.
     5. min_std = mitad de la desviación de gris más baja vista.
-    6. pipeline.py emite CALIBRATED y guarda en calib.json para no recalibrar al reiniciar.
+    6. Red (model.py, si está eye_model.onnx): logit de cada frame guardado. Si separa
+       bien (mediana abierta - mediana cerrada >= MODEL_MIN_SEP), se usa la red para
+       decidir abierto/cerrado con el corte a MODEL_K del camino de cerrado a abierto
+       (más cerca de cerrado: un clic falso es peor que uno perdido). El umbral clásico
+       se sigue calculando para dibujar la pupila y por si la red no separa.
+    7. pipeline.py emite CALIBRATED y guarda en calib.json para no recalibrar al reiniciar.
 
 Calibrator no bloquea: pipeline.py lo alimenta frame a frame con feed() y muestra
 .message en la EyeView. Los pasos 3-5 corren en un hilo aparte (en la Raspberry
@@ -30,10 +35,10 @@ from dataclasses import asdict, dataclass, replace
 import cv2
 import numpy as np
 
-from eyeclick.vision import detector
+from eyeclick.vision import detector, model
 
 CALIB_FILE = "calib.json"
-VERSION = 2                 # sube cuando cambian las unidades: un calib.json viejo se ignora
+VERSION = 3                 # sube cuando cambian las unidades: un calib.json viejo se ignora
 OPEN_SECONDS = 3.0
 CLOSED_SECONDS = 3.0
 READY_SECONDS = 1.0         # tiempo para reaccionar al mensaje
@@ -45,10 +50,12 @@ SAFETY_STEPS = 3            # bajar este número de umbrales desde el límite
 SMOOTH = 5                  # umbrales vecinos que se promedian (un pico suelto es ruido)
 MAX_CLOSED_RATE = 0.20      # con el ojo cerrado no debería verse pupila en más de esto
 MIN_OPEN_RATE = 0.50        # con el ojo abierto debería verse pupila al menos en esto
+MODEL_MIN_SEP = 3.0         # la red separa si las medianas de logit difieren al menos esto
+MODEL_K = 0.4               # corte de la red: 0 = mediana cerrada, 1 = mediana abierta
 
-OPEN_MSG = "Mantén el ojo abierto"
-CLOSED_MSG = "Cierra el ojo"
-WORKING_MSG = "Calculando..."
+OPEN_MSG = "Keep your eye open"
+CLOSED_MSG = "Close your eye"
+WORKING_MSG = "Calculating..."
 
 
 @dataclass
@@ -61,6 +68,8 @@ class Calibration:
     ref_level: float = 0.0      # brillo típico al calibrar (0 = no escalar thr)
     cx: float = -1.0            # centro típico de la pupila (-1 = desconocido)
     cy: float = -1.0
+    use_model: bool = False     # decidir con la red (model.py) en vez del umbral
+    model_cut: float = 0.0      # logit > model_cut = abierto
     version: int = VERSION
 
     def save(self, path=CALIB_FILE):
@@ -91,6 +100,7 @@ class Calibrator:
         self._t_phase = None
         self._last_sample = -math.inf
         self._grays = {"open": [], "closed": []}
+        self._logits = {"open": [], "closed": []}
         self._finished = threading.Event()
 
     def feed(self, frame, t):
@@ -113,6 +123,9 @@ class Calibrator:
         if elapsed >= READY_SECONDS and t - self._last_sample >= SAMPLE_DT:
             self._last_sample = t
             self._grays[self._phase].append(detector.preprocess(frame))
+            score = model.logit(frame)          # None si no hay modelo
+            if score is not None:
+                self._logits[self._phase].append(score)
 
     def wait(self, timeout=None):
         """Espera a que termine el cálculo (para pruebas y herramientas)."""
@@ -121,17 +134,19 @@ class Calibrator:
     def _finish(self):
         opened, closed = self._grays["open"], self._grays["closed"]
         self._grays = {"open": [], "closed": []}    # liberar memoria
+        logits, self._logits = self._logits, {"open": [], "closed": []}
         try:
             self.result = self._compute(opened, closed)
+            self.result = self._with_model(self.result, logits["open"], logits["closed"])
         except Exception as e:              # nunca dejar al pipeline esperando
-            self.warning, self.result = f"Calibración falló: {e}", Calibration()
-        self.message = "Listo"
+            self.warning, self.result = f"Calibration failed: {e}", Calibration()
+        self.message = "Done"
         self.done = True
         self._finished.set()
 
     def _compute(self, opened, closed):
         if not opened or not closed:
-            self.warning = "Calibración sin imágenes: revisa la cámara"
+            self.warning = "Calibration got no images: check the camera"
             return Calibration()
 
         # paso 3: probar umbrales
@@ -142,7 +157,7 @@ class Calibrator:
         trials = [self._try(thr, ref_level, opened, closed) for thr in range(lo, max(lo, hi) + 1, step)]
         trials = [tr for tr in trials if tr is not None]
         if not trials:
-            self.warning = "No se ve la pupila: acerca o enfoca la cámara"
+            self.warning = "Pupil not visible: move the camera closer or focus it"
             return Calibration(ref_level=ref_level)
 
         # paso 4: el umbral más alto que aún separa, menos SAFETY_STEPS de margen
@@ -152,7 +167,7 @@ class Calibrator:
         if open_rate < MIN_OPEN_RATE:
             warnings.append("La pupila se ve poco: revisa la luz o el enfoque")
         if closed_rate > MAX_CLOSED_RATE:
-            warnings.append("Con el ojo cerrado aún se ve pupila: baja el umbral")
+            warnings.append("Pupil still visible with the eye closed: lower the threshold")
         self.warning = "; ".join(warnings)
 
         # paso 5 (+ desviaciones para el Plan B)
@@ -164,6 +179,18 @@ class Calibrator:
             open_std=float(np.median(open_stds)),
             closed_std=float(np.median(closed_stds)),
         )
+
+    def _with_model(self, result, open_logits, closed_logits):
+        """Paso 6: ¿la red separa el ojo abierto del cerrado de esta persona?"""
+        if not open_logits or not closed_logits:
+            return result
+        lo, hi = float(np.median(closed_logits)), float(np.median(open_logits))
+        if hi - lo < MODEL_MIN_SEP:
+            self.warning = "; ".join(filter(None, [self.warning, "Model unsure here: using pupil detection"]))
+            return result
+        # la red decide: los avisos de la pupila (p. ej. iris fuera del cuadro) ya no aplican
+        self.warning = ""
+        return replace(result, use_model=True, model_cut=lo + MODEL_K * (hi - lo))
 
     @staticmethod
     def _try(thr, ref_level, opened, closed):

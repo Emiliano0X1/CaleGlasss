@@ -62,9 +62,9 @@ def fake_view(status, closed_for, thr, fps, message, t):
         d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(20, 20, 20), outline=(0, 200, 0), width=2)
     elif status == "closed":
         d.line((cx - 70, cy, cx + 70, cy), fill=(30, 30, 30), width=6)     # párpado
-    label = {"open": "ABIERTO", "closed": f"CERRADO {closed_for:.1f} s", "lost": "SIN OJO"}[status]
+    label = {"open": "OPEN", "closed": f"CLOSED {closed_for:.1f} s", "lost": "NO EYE"}[status]
     d.text((10, 8), label, fill="white", font=FONT_BIG, stroke_width=2, stroke_fill="black")
-    d.text((10, VIEW_H - 24), "SIMULADOR  F8 cerrar  F7 sin ojo", fill="white", font=FONT_SMALL,
+    d.text((10, VIEW_H - 24), "SIMULATOR  F8 close  F7 no eye", fill="white", font=FONT_SMALL,
            stroke_width=1, stroke_fill="black")
     frame = np.asarray(img)[:, :, ::-1].copy()          # RGB -> BGR, como la cámara
 
@@ -191,7 +191,7 @@ class MockSource:
         message = ""
         if self._calibrate_until is not None:
             if t < self._calibrate_until:
-                message = "Calibrando (simulado)..."
+                message = "Calibrating (simulated)..."
             else:
                 self._calibrate_until = None
                 self.publish(EyeEvent(EventType.CALIBRATED, t))

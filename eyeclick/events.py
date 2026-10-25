@@ -6,6 +6,7 @@ Nadie cambia este archivo sin avisar al otro.
 Secuencias típicas:
     clic derecho:       EYE_CLOSED -> STAGE_LEFT -> STAGE_RIGHT -> CLICK_RIGHT
     parpadeo natural:   EYE_CLOSED -> CANCELLED
+    arrastrar:          EYE_CLOSED -> STAGE_LEFT -> STAGE_RIGHT -> STAGE_DRAG -> DRAG_END
 """
 from dataclasses import dataclass, field
 from enum import Enum
@@ -20,7 +21,9 @@ class EventType(Enum):
     STAGE_RIGHT = "stage_right"  # lleva 1.2 s cerrado: si abre ahora es clic derecho (bip 2)
     CLICK_LEFT = "click_left"    # abrió entre 0.5 y 1.2 s
     CLICK_RIGHT = "click_right"  # abrió entre 1.2 y 3.0 s
-    CANCELLED = "cancelled"      # parpadeo natural, más de 3 s, o se perdió la imagen
+    STAGE_DRAG = "stage_drag"    # lleva 3.0 s cerrado: se aprieta el botón izquierdo y se arrastra con la cabeza
+    DRAG_END = "drag_end"        # abrió (o se perdió el ojo) arrastrando: se suelta el botón
+    CANCELLED = "cancelled"      # parpadeo natural, o se perdió la imagen antes de arrastrar
     EYE_LOST = "eye_lost"        # la cámara no ve bien el ojo (mal enfoque, se movió)
     CALIBRATED = "calibrated"    # terminó la calibración, ya se puede usar
 
@@ -29,7 +32,7 @@ class EventType(Enum):
 class EyeEvent:
     type: EventType
     t: float = field(default_factory=time.monotonic)
-    duration: float = 0.0        # segundos que el ojo estuvo cerrado (en CLICK_* y CANCELLED)
+    duration: float = 0.0        # segundos que el ojo estuvo cerrado (en CLICK_*, DRAG_END y CANCELLED)
 
 
 @dataclass

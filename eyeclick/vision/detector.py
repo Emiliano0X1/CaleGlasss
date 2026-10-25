@@ -29,6 +29,10 @@ Pasos (detect):
 Coordenadas (contour, center, calib.cx/cy) y áreas están en la resolución de
 trabajo (work_size), no en la del frame original.
 
+Con calib.use_model (calibración con eye_model.onnx, ver model.py) la red decide
+abierto/cerrado: sirve con la cámara al revés, de lado o con el iris fuera del cuadro.
+La pupila se sigue buscando, solo para dibujarla y para las métricas del monitor.
+
 Plan B: USE_STD_ONLY = True ignora la pupila y clasifica solo con la desviación
 de gris (un ojo cerrado se ve más plano), con open_std/closed_std de la calibración.
 
@@ -44,6 +48,8 @@ from functools import lru_cache
 
 import cv2
 import numpy as np
+
+from eyeclick.vision import model
 
 WORK_W = 320
 MIN_CIRCULARITY = 0.5
@@ -64,6 +70,7 @@ class EyeState:
     center: tuple | None = None
     contour: np.ndarray | None = None   # para que annotate.py lo dibuje
     mask: np.ndarray | None = None      # imagen binaria del umbral (miniatura en el monitor)
+    score: float | None = None          # logit de la red, si se usó
 
 
 def work_size(shape):
@@ -212,11 +219,26 @@ def classify(frame, calib) -> EyeState:
         return EyeState("lost", mask=mask)
     if contour is not None:
         contour = refine(contour, mask)[0]
+    if calib.use_model:
+        score = model.logit(frame)
+        if score is not None:
+            return _with_score(score, calib, area, contour, mask)
     if contour is None or area < CLOSED_AREA_RATIO * calib.open_area:
         return EyeState("closed", area, contour=contour, mask=mask)
     m = cv2.moments(contour)
     center = (m["m10"] / m["m00"], m["m01"] / m["m00"]) if m["m00"] else None
     return EyeState("open", area, center, contour, mask)
+
+
+def _with_score(score, calib, area, contour, mask):
+    status = "open" if score > calib.model_cut else "closed"
+    center = None
+    if contour is not None:
+        m = cv2.moments(contour)
+        center = (m["m10"] / m["m00"], m["m01"] / m["m00"]) if m["m00"] else None
+    if status == "closed":
+        center = None
+    return EyeState(status, area, center, contour if status == "open" else None, mask, score)
 
 
 def _classify_std(gray, calib):

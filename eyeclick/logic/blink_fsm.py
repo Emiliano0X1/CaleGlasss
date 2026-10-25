@@ -13,8 +13,10 @@ Decisiones:
   también cancela. MIN_BLINK solo lo usa el monitor para la barra.
 - Un 'lost' corto (< LOST_FRAMES) con el ojo cerrado NO pausa el cierre: el tiempo
   sigue corriendo y los STAGE_* salen a su hora aunque caigan en esos frames.
+- Más de DRAG_AT cerrado = arrastrar (STAGE_DRAG). Termina SIEMPRE con DRAG_END: al abrir,
+  al perder el ojo (LOST_FRAMES) o con reset(); así el botón nunca se queda apretado.
 """
-from eyeclick.config import CANCEL_AT, FRAMES_TO_CHANGE, LEFT_AT, LOST_FRAMES, RIGHT_AT
+from eyeclick.config import DRAG_AT, FRAMES_TO_CHANGE, LEFT_AT, LOST_FRAMES, RIGHT_AT
 from eyeclick.events import EventType as E
 from eyeclick.events import EyeEvent
 
@@ -24,7 +26,7 @@ class BlinkFSM:
         self.emit = emit                # función que recibe un EyeEvent (bus.publish)
         self.closed = False
         self.t0 = 0.0                   # cuándo empezó el cierre
-        self.stage = 0                  # 0 nada, 1 izquierdo, 2 derecho, 3 cancelado
+        self.stage = 0                  # 0 nada, 1 izquierdo, 2 derecho, 3 arrastrando, 4 terminado
         self.streak, self.streak_t = 0, 0.0
         self.lost_frames = 0
 
@@ -34,8 +36,8 @@ class BlinkFSM:
 
     def reset(self, t):
         """Olvida el cierre en curso (p. ej. al recalibrar); si no había terminado, lo cancela."""
-        if self.closed and self.stage != 3:
-            self.emit(EyeEvent(E.CANCELLED, t, t - self.t0))
+        if self.closed:
+            self._abort(t)
         self.closed, self.stage = False, 0
         self.streak, self.lost_frames = 0, 0
 
@@ -43,9 +45,8 @@ class BlinkFSM:
         if status == "lost":
             self.lost_frames += 1
             if self.lost_frames == LOST_FRAMES:
-                if self.closed and self.stage != 3:
-                    self.stage = 3
-                    self.emit(EyeEvent(E.CANCELLED, t, t - self.t0))
+                if self.closed:
+                    self._abort(t)
                 self.emit(EyeEvent(E.EYE_LOST, t))
             if self.closed:
                 self._tick(t)
@@ -77,9 +78,17 @@ class BlinkFSM:
         elif self.stage == 1 and d >= RIGHT_AT:
             self.stage = 2
             self.emit(EyeEvent(E.STAGE_RIGHT, t, d))
-        elif self.stage == 2 and d >= CANCEL_AT:
+        elif self.stage == 2 and d >= DRAG_AT:
             self.stage = 3
-            self.emit(EyeEvent(E.CANCELLED, t, d))
+            self.emit(EyeEvent(E.STAGE_DRAG, t, d))
+
+    def _abort(self, t):
+        """Cierre que termina sin abrir el ojo: soltar si arrastraba, si no cancelar."""
+        if self.stage == 3:
+            self.emit(EyeEvent(E.DRAG_END, t, t - self.t0))
+        elif self.stage != 4:
+            self.emit(EyeEvent(E.CANCELLED, t, t - self.t0))
+        self.stage = 4
 
     def _on_open(self):
         d = self.streak_t - self.t0
@@ -87,5 +96,7 @@ class BlinkFSM:
             self.emit(EyeEvent(E.CLICK_LEFT, self.streak_t, d))
         elif self.stage == 2:
             self.emit(EyeEvent(E.CLICK_RIGHT, self.streak_t, d))
+        elif self.stage == 3:
+            self.emit(EyeEvent(E.DRAG_END, self.streak_t, d))
         elif self.stage == 0:
             self.emit(EyeEvent(E.CANCELLED, self.streak_t, d))

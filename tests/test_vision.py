@@ -18,7 +18,7 @@ import pytest
 
 from eyeclick.config import VIEW_H, VIEW_W
 from eyeclick.events import EventType as E
-from eyeclick.vision import calibration, detector
+from eyeclick.vision import calibration, detector, model
 from eyeclick.vision.annotate import MASK_H, MASK_W, annotate, small_mask
 from eyeclick.vision.calibration import Calibration, Calibrator
 from eyeclick.vision.camera import VideoFileSource
@@ -64,8 +64,17 @@ def _calibrate(closed=CLOSED):
     return cal
 
 
+@pytest.fixture(scope="module", autouse=True)
+def sin_modelo():
+    """Estas pruebas son del detector clásico: la red (model.py) no participa.
+    La red tiene las suyas en test_model.py."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(model, "logit", lambda frame: None)
+        yield
+
+
 @pytest.fixture(scope="module")
-def calib():
+def calib(sin_modelo):
     cal = _calibrate()
     assert cal.warning == ""
     return cal.result
@@ -145,7 +154,7 @@ def test_calibracion_mensajes():
 
 def test_calibracion_sin_cerrar_el_ojo_avisa():
     cal = _calibrate(closed=OPEN)                      # nunca cierra el ojo
-    assert "cerrado" in cal.warning
+    assert "closed" in cal.warning
 
 
 def test_calibration_guarda_y_carga(tmp_path, calib):

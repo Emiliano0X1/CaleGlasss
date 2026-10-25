@@ -41,7 +41,7 @@ def annotate(frame, state, calib):
 
     if state.status == "lost":
         cv2.rectangle(view, (0, 0), (VIEW_W - 1, VIEW_H - 1), RED, 8)
-        _text_center(view, "SIN OJO", RED)
+        _text_center(view, "NO EYE", RED)
     else:
         is_open = state.status == "open"
         color = GREEN if is_open else YELLOW
@@ -56,7 +56,10 @@ def annotate(frame, state, calib):
             cx, cy = state.center[0] * scale[0], state.center[1] * scale[1]
             cv2.circle(view, (round(cx), round(cy)), 3, color, -1, AA)
 
-    _text(view, f"area {state.area:.0f}/{calib.open_area:.0f}  thr {calib.thr}", (6, VIEW_H - 8))
+    if state.score is not None:
+        _text(view, f"model {state.score:+.1f}  cut {calib.model_cut:+.1f}", (6, VIEW_H - 8))
+    else:
+        _text(view, f"area {state.area:.0f}/{calib.open_area:.0f}  thr {calib.thr}", (6, VIEW_H - 8))
     return view
 
 

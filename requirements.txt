@@ -4,3 +4,6 @@ pynput
 sounddevice
 pillow
 pytest
+faster-whisper
+onnxruntime
+comtypes; sys_platform == "win32"

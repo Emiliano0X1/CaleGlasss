@@ -7,3 +7,7 @@ events_log.csv
 calib.json
 *.mp4
 *.avi
+.vs/
+__vm/
+*.vcxproj.user
+wifi_secrets.h
