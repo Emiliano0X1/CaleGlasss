@@ -5,7 +5,8 @@
  * find_person(name), sprints().
  * The last tool, propose(summary, actions), validates the plan, saves it as pending in stdb
  * (submit_proposal) and sends it to Telegram as a numbered list with a ✅ Approve button
- * (callback_data ap:<proposal id>). execute/actions.ts applies it after approval.
+ * (callback_data ap:<proposal id>); the message is saved with save_plan_message so an approval
+ * from the glasses can edit it. execute/actions.ts applies the plan after approval.
  *
  * propose rejects the plan (is_error, so Claude fixes it) if an action:
  *   - uses an issue key that no tool returned in this run, or that doesn't exist in Jira
@@ -292,7 +293,8 @@ async function propose(
   if (ctx.chatId) {
     const list = lines.map((l, i) => `${i + 1}. ${l}`).join('\n');
     const message = `📝 Plan for "${ctx.requestText}"\n${summary}\n\n${list}`.slice(0, 4000);
-    await send(ctx.chatId, message, [[{ text: '✅ Approve', data: `ap:${id}` }]]);
+    const messageId = await send(ctx.chatId, message, [[{ text: '✅ Approve', data: `ap:${id}` }]]);
+    await call('save_plan_message', [id, ctx.chatId, messageId, message]);
   }
   return { content: { ok: true, proposal_id: id, actions: actions.length }, done: true };
 }

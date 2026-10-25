@@ -14,6 +14,10 @@ Funciona con los eventos del bus (text_for), con tres reglas para no quedarse pe
       app.py avisa con set_paused().
 
 Se puede arrastrar con el mouse para moverlo (no tiene barra de título).
+
+set_note(text): second, smaller line under the state, for the voice bridge (--voice):
+"Plan ready: say approve or blink", "Listening…". Empty text hides it. It's separate from
+the state line, so eye events never overwrite it.
 """
 import time
 import tkinter as tk
@@ -38,6 +42,8 @@ FLASH_S = 0.8           # cuánto duran "clic ✓" y "ACTIVO"
 CALIBRATED_S = 1.5
 TICK_MS = 200
 GEOMETRY = "260x56+20+20"
+SIZE, SIZE_WITH_NOTE = "260x56", "260x84"
+NOTE_BG = "#1f2a36"
 
 
 def text_for(ev):
@@ -79,8 +85,12 @@ class Overlay:
         self.label = tk.Label(self.win, text=IDLE, font=("Helvetica", 18, "bold"),
                               fg="white", bg=GRAY)
         self.label.pack(fill="both", expand=True)
-        self.label.bind("<ButtonPress-1>", self._start_drag)
-        self.label.bind("<B1-Motion>", self._on_drag)
+        self.note = tk.Label(self.win, text="", font=("Helvetica", 10, "bold"), fg="white", bg=NOTE_BG,
+                             wraplength=250)
+        self._note_text = ""
+        for widget in (self.label, self.note):
+            widget.bind("<ButtonPress-1>", self._start_drag)
+            widget.bind("<B1-Motion>", self._on_drag)
         self._tick()
 
     def show(self, text, warn=False, hold=None, sticky=False):
@@ -94,6 +104,19 @@ class Overlay:
         shown = text_for(ev)
         if shown is not None:
             self.show(*shown)
+
+    def set_note(self, text):
+        """Bridge line under the state ('' hides it). Main thread only."""
+        if text == self._note_text:
+            return
+        if text and not self._note_text:
+            self.note.pack(fill="x", side="bottom")
+            self.win.geometry(SIZE_WITH_NOTE)
+        elif not text:
+            self.note.pack_forget()
+            self.win.geometry(SIZE)
+        self.note.config(text=text)
+        self._note_text = text
 
     def set_paused(self, paused):
         self.paused = paused

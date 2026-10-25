@@ -4,3 +4,6 @@ pynput
 sounddevice
 pillow
 pytest
+faster-whisper
+httpx
+python-dotenv

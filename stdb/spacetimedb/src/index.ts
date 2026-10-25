@@ -11,11 +11,15 @@
  *   people      who can make requests: Telegram chat (receipts, approvals) and Atlassian account
  *   agents      each agent's last heartbeat: what it's doing and on which work item
  *   actions     one row per change made in Jira while executing a proposal (before / after)
+ *   plan_messages  the Telegram message each plan was sent in, so approving from the
+ *               glasses can edit it ("Approved from the glasses")
  *
  * Work item status: pending -> claimed (claim_work) -> proposed (submit_proposal)
  *   -> approved (approve_proposal) -> executing (start_execution) -> done (complete_proposal)
- *   or failed (fail_proposal).
- * Proposal status:  pending -> approved -> executing -> done | failed.
+ *   or failed (fail_proposal), or rejected (reject_proposal).
+ * Voice approvals and unclear voice input are also work items (type 'approve', 'reject',
+ * 'unclear'), so a retried request_id is ignored; set_work_status closes them.
+ * Proposal status:  pending -> approved -> executing -> done | failed, or pending -> rejected.
  *
  * Column and reducer names are snake_case on purpose: they're what you use in
  * `spacetime call agentes create_work ...` and `spacetime sql agentes ...`.
@@ -48,8 +52,8 @@ const proposals = table(
     agent: t.string(),
     summary: t.string(),
     actions: t.string(),              // JSON as text: [{ type: 'move_to_sprint', issue, ... }, ...]
-    status: t.string(),               // 'pending' | 'approved' | 'executing' | 'done' | 'failed'
-    approved_by: t.string(),          // who approved it, or ''
+    status: t.string(),               // 'pending' | 'approved' | 'executing' | 'done' | 'failed' | 'rejected'
+    approved_by: t.string(),          // who approved (or rejected) it, or ''
     approved_via: t.string(),         // 'glasses' | 'telegram' | ''
   }
 );
@@ -97,7 +101,17 @@ const actions = table(
   }
 );
 
-const spacetimedb = schema({ workItems, proposals, events, people, agents, actions });
+const planMessages = table(
+  { name: 'plan_messages', public: true },
+  {
+    proposal_id: t.string().primaryKey(),
+    chat_id: t.string(),
+    message_id: t.u32(),
+    text: t.string(),                 // the message as sent (Telegram's edit replaces the whole text)
+  }
+);
+
+const spacetimedb = schema({ workItems, proposals, events, people, agents, actions, planMessages });
 export default spacetimedb;
 
 // If a work item with that request_id already exists it does nothing: forge-app can retry without duplicates.
@@ -278,3 +292,43 @@ export const fail_proposal = spacetimedb.reducer({ id: t.string(), error: t.stri
     }
   ctx.db.events.insert({ id: 0n, date: ctx.timestamp, actor: proposal.agent, text: `${id} failed: ${error}` });
 });
+
+// Only a pending proposal can be rejected; nothing in Jira changes.
+export const reject_proposal = spacetimedb.reducer(
+  { id: t.string(), person: t.string(), via: t.string() },
+  (ctx, { id, person, via }) => {
+    const proposal = ctx.db.proposals.id.find(id);
+    if (!proposal) {
+      throw new SenderError(`proposal ${id} doesn't exist`);
+    }
+    if (proposal.status !== 'pending') {
+      throw new SenderError(`already ${proposal.status} by ${proposal.approved_by || 'nobody'}`);
+    }
+    ctx.db.proposals.id.update({ ...proposal, status: 'rejected', approved_by: person, approved_via: via });
+    const work = ctx.db.workItems.id.find(proposal.work_id);
+    if (work) {
+      ctx.db.workItems.id.update({ ...work, status: 'rejected' });
+    }
+  }
+);
+
+// For work items no agent runs, e.g. a voice approval ('done') or voice input nobody understood ('unclear').
+export const set_work_status = spacetimedb.reducer({ id: t.string(), status: t.string() }, (ctx, { id, status }) => {
+  const work = ctx.db.workItems.id.find(id);
+  if (!work) {
+    throw new SenderError(`work item ${id} doesn't exist`);
+  }
+  ctx.db.workItems.id.update({ ...work, status });
+});
+
+// Saved by the Jira agent right after it sends the plan to Telegram (sending it again replaces it).
+export const save_plan_message = spacetimedb.reducer(
+  { proposal_id: t.string(), chat_id: t.string(), message_id: t.u32(), text: t.string() },
+  (ctx, row) => {
+    if (ctx.db.planMessages.proposal_id.find(row.proposal_id)) {
+      ctx.db.planMessages.proposal_id.update(row);
+    } else {
+      ctx.db.planMessages.insert(row);
+    }
+  }
+);

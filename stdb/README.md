@@ -19,6 +19,7 @@ Created with `spacetime init --lang typescript --server-only`. The module is in
 | `people` | `id` (PK, what the glasses send as `person`), `name`, `telegram_chat_id`, `atlassian_account_id` |
 | `agents` | `name` (PK), `status`, `work_id`, `last_seen` (last heartbeat) |
 | `actions` | `id` (PK, auto), `proposal_id`, `type`, `target` (issue key), `before`, `after`, `date`: one row per change made in Jira |
+| `plan_messages` | `proposal_id` (PK), `chat_id`, `message_id`, `text`: the Telegram message each plan was sent in, so an approval from the glasses can edit it |
 
 ## Reducers
 
@@ -35,6 +36,9 @@ Created with `spacetime init --lang typescript --server-only`. The module is in
 - `record_action(proposal_id, type, target, before, after)`: one change made in Jira (the proposal must be `executing`).
 - `complete_proposal(id)`: the proposal and its work item become `done` (this unblocks `depends_on`).
 - `fail_proposal(id, error)`: an action failed halfway; proposal and work item become `failed`, the error goes to `events`.
+- `reject_proposal(id, person, via)`: only a `pending` proposal; it and its work item become `rejected`.
+- `set_work_status(id, status)`: closes work items no agent runs (voice approvals: `done`, voice input nobody understood: `unclear`).
+- `save_plan_message(proposal_id, chat_id, message_id, text)`: called by the Jira agent right after it sends the plan.
 
 Work item status: `pending` → `claimed` → `proposed` → `approved` → `executing` → `done` (or `failed`).
 Proposal status: `pending` → `approved` → `executing` → `done` (or `failed`).

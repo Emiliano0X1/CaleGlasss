@@ -8,8 +8,8 @@
  *    (getWebhookInfo then shows that error as the bot's last_error_message).
  * 2. Logs what arrived (message text or button callback_data): `forge logs` / `forge tunnel`.
  * 3. ✅ Approve button (callback_data ap:<proposal id>), only from someone in the `people` table:
- *      approve_proposal(id, person, 'telegram')   fails if it isn't pending -> "Already approved", nothing queued
- *      push { type: 'execute', proposal_id }      queue/consumer.ts runs the plan
+ *      execute/approve.ts                         approve_proposal + { type: 'execute' } to the queue;
+ *                                                 not pending -> "Already approved", nothing queued
  *      answer the button and edit the plan message to "Approved, executing…" (this drops the button)
  *    Any other button just gets answered, so it stops showing the loading clock.
  * Always answers 200 once the secret is valid: otherwise Telegram keeps retrying the same update.
@@ -19,13 +19,10 @@
  * - [ ] Text message from a registered person (people.telegram_chat_id) -> written request,
  *       same as "request" in glasses.ts.
  */
-import { Queue } from '@forge/events';
-import { QUEUE_KEY, type QueueEvent } from '../queue/consumer';
-import { call, sql, StdbError } from '../lib/stdb';
+import { approve as approveProposal } from '../execute/approve';
+import { sql } from '../lib/stdb';
 import { answerCallbackQuery, editMessage } from '../lib/telegram';
 import { header, json, secretMatches, type WebTriggerRequest, type WebTriggerResponse } from '../lib/webtrigger';
-
-const agentRuns = new Queue<QueueEvent>({ key: QUEUE_KEY });
 
 interface CallbackQuery {
   id: string;
@@ -87,25 +84,17 @@ async function approve(callback: CallbackQuery, proposalId: string): Promise<str
   }
   const [personId, name] = person.map(String);
 
+  let result;
   try {
-    await call('approve_proposal', [proposalId, personId, 'telegram']);
+    result = await approveProposal(proposalId, personId, 'telegram');
   } catch (e) {
-    if (e instanceof StdbError && e.message.includes('already approved')) {
-      console.log(`telegram: ${proposalId} was already approved, nothing queued`);
-      return 'Already approved';
-    }
-    console.error(`telegram: approve_proposal ${proposalId} failed:`, e);
+    console.error(`telegram: approving ${proposalId} failed:`, e);
     return "Couldn't approve the plan, try again";
   }
-  console.log(`telegram: ${proposalId} approved by ${personId}`);
-
-  let status = 'Approved, executing…';
-  try {
-    await agentRuns.push({ body: { type: 'execute', proposal_id: proposalId } });
-  } catch (e) {
-    console.error(`telegram: queue push for ${proposalId} failed:`, e);
-    status = "Approved, but the execution couldn't be queued";
+  if (result === 'already') {
+    return 'Already approved';
   }
+  const status = result === 'approved' ? 'Approved, executing…' : "Approved, but the execution couldn't be queued";
   if (callback.message) {
     const { chat, message_id, text } = callback.message;
     try {

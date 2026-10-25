@@ -20,6 +20,12 @@ F9 llega en el hilo de pynput, así que request_pause() solo deja la petición e
 una cola y el tick del hilo principal la aplica (tkinter no es seguro entre hilos).
 
 Agregar una pieza nueva (voz, agente...) = crear un suscriptor o fuente y registrarlo aquí.
+
+Voice bridge (--voice, eyeclick/bridge/): "Hey glasses, ..." starts a Jira command (the mic
+is always on, it beeps through feedback when it hears the phrase); its listener is one more
+subscriber (long blink = approve the pending plan or listen for a request); F10 = talk
+(fallback); each tick copies Bridge.note() to the overlay's second line. Without --voice
+nothing of it is loaded.
 """
 import logging
 import queue
@@ -47,7 +53,7 @@ def make_source(publish, mock=False, video=None, camera=None):
 
 
 class App:
-    def __init__(self, mock=False, video=None, camera=None, demo=False):
+    def __init__(self, mock=False, video=None, camera=None, demo=False, voice=False):
         self.bus = Bus()
         self.source = make_source(self.bus.publish, mock, video, camera)
         self._pause_requests = queue.SimpleQueue()
@@ -62,6 +68,12 @@ class App:
         self.feedback = feedback.Feedback()
         self.overlay = overlay.Overlay(self.root, self.source)
         self.monitor = monitor.Monitor(self.root, self.source, on_pause=self.request_pause, demo=demo)
+        self.bridge = None
+        if voice:
+            from eyeclick.bridge import Bridge   # here: --voice loads httpx, sounddevice and Whisper
+            from eyeclick.bridge import listener
+            self.bridge = Bridge(beep=self.feedback.beep)
+            self.bus.subscribe(self.bridge.listener, listener.TYPES)
 
         for sub, types in (
             (self.logger, logger.TYPES),
@@ -78,6 +90,8 @@ class App:
     def run(self):
         try:
             self.source.start()
+            if self.bridge is not None:
+                self.bridge.start()
             self._start_hotkeys()
             self._tick()
             self.root.mainloop()
@@ -96,6 +110,8 @@ class App:
         self._closed = True
         log.info("Cerrando EyeClick")
         self._safe(self.source.stop)
+        if self.bridge is not None:
+            self._safe(self.bridge.stop)
         self._safe(self.monitor.close)      # termina de escribir el video si se estaba grabando
         self._safe(self.overlay.close)
         if self._keys is not None:
@@ -117,6 +133,8 @@ class App:
                 break
             self._toggle_pause()
         self.bus.dispatch()
+        if self.bridge is not None:
+            self.overlay.set_note(self.bridge.note())
         self._after_id = self.root.after(DISPATCH_MS, self._tick)
 
     def _toggle_pause(self):
@@ -132,6 +150,8 @@ class App:
             def on_press(key):
                 if key == keyboard.Key.f9:
                     self.request_pause()
+                elif key == keyboard.Key.f10 and self.bridge is not None:
+                    self.bridge.talk()      # pynput's thread: talk() only starts a worker
 
             self._keys = keyboard.Listener(on_press=on_press, daemon=True)
             self._keys.start()
@@ -146,6 +166,6 @@ class App:
             log.exception("Error al cerrar")
 
 
-def start(mock=False, video=None, camera=None, demo=False):
+def start(mock=False, video=None, camera=None, demo=False, voice=False):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    App(mock=mock, video=video, camera=camera, demo=demo).run()
+    App(mock=mock, video=video, camera=camera, demo=demo, voice=voice).run()

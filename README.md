@@ -91,10 +91,10 @@ CaleGlasss/
 │   │   ├── monitor.py        # window with the eye video, status and controls
 │   │   └── overlay.py        # small floating indicator
 │   └── bridge/               # glasses-bridge: voice + agents, same process as EyeClick  (stubs)
-│       ├── listener.py       # microphone and blink activation (bus subscriber)
+│       ├── listener.py       # long blink: approve the pending plan or listen (bus subscriber)
 │       ├── stt.py            # faster-whisper
 │       ├── forge_client.py   # POST to the Forge `glasses` web trigger (request or approve)
-│       └── live_state.py     # reads SpacetimeDB and updates the overlay
+│       └── live_state.py     # polls SpacetimeDB for the newest pending plan (overlay note)
 ├── forge-app/                # Atlassian Forge app: issue panel deployed ✅, agents (stubs)
 │   ├── manifest.yml          # issue panel active; agent modules commented out
 │   ├── package.json          # from the jira-issue-panel-ui-kit template
@@ -241,6 +241,43 @@ After the receipt, `glasses` pushes `{ type: "agent", work_id, person }` to the 
 
 Tapping ✅ (`ap:<proposal id>`) hits the `telegram` trigger: `approve_proposal` in stdb (a second tap answers "Already approved" and queues nothing), the message changes to "Approved, executing…", and `{ type: "execute", proposal_id }` goes to the same queue. The consumer then runs `start_execution`, applies each action in Jira (`src/execute/actions.ts`, one `record_action` row per change), `complete_proposal`, and sends `✅ Done` with each change and its `/browse/KEY` link. A 403 from Jira means a missing write scope (`write:jira-work`, `write:sprint:jira-software`); a 400, a wrong request body.
 
+### Voice inside EyeClick (`--voice`)
+
+```bash
+.venv/Scripts/python run.py --mock --voice      # or --camera 1 --voice with the glasses
+```
+
+- **"Hey glasses, ..."** is how a Jira command starts. The microphone is always on; each utterance is transcribed locally with Whisper `tiny.en` (~0.4 s) and dropped unless it has the phrase, so nothing leaves the laptop until you say it. On the phrase it beeps and:
+  - *"Hey glasses, move the open bugs to sprint 13"*: the rest of the sentence (transcribed again with `small.en`) is the request.
+  - *"Hey glasses"* alone: after the beep it records the request.
+  - *"Hey glasses, approve"*: approves the pending plan.
+- **Long blink** = the eye closed for 3 s (`CANCEL_AT`, the eye module's `CANCELLED` event; in `--mock`, hold F8 for 3 s). With a pending plan it approves it (`{"type": "approve", "proposal_id"}` to `glasses`, via `glasses`, and the plan's Telegram message is edited to "Approved from the glasses"); with no plan it starts listening for a request.
+- **F10** = talk: listens right away, without the phrase (fallback for a noisy room).
+- The overlay gets a second line: `Say "Hey glasses, ..."`, `Plan ready: "Hey glasses, approve" or blink` while `live_state.py` sees a pending plan (it polls SpacetimeDB every 2 s), and "Listening…", "Approved ✓ executing"… while it works.
+- Resting the eyes for 3 s also counts as a long blink, so `--voice` is opt-in. Whisper loads in the background; blink approvals work before it's ready.
+
+Without EyeClick: `.venv/Scripts/python -m eyeclick.bridge --wake` runs the same wake loop in the terminal (`--no-send` only prints what it would send).
+
+### Voice test (Enter instead of the blink)
+
+```bash
+python -m venv .venv && .venv/Scripts/pip install -r requirements.txt   # Windows; .venv/bin/pip on Mac
+cp eyeclick/bridge/.env.example eyeclick/bridge/.env                    # URL, APPROVAL_SECRET, PERSON_ID, MIC_DEVICE
+.venv/Scripts/python -m eyeclick.bridge --list-devices                 # find the glasses' Bluetooth mic -> MIC_DEVICE
+.venv/Scripts/python -m eyeclick.bridge                                # Enter, talk; prints the text and the time
+```
+
+Speak **English**. Enter records at 16 kHz until 1 s of silence after you speak (or 8 s); the microphone stays open with 0.5 s of pre-roll, so a short "approve" isn't cut off. Whisper `small.en` (English-only, int8) transcribes it and it goes to `glasses` with a new `request_id` (uuid4). The first run downloads the model (~30 s). On a laptop CPU `small.en` takes ~2.5 s for a short sentence and `base.en` ~0.8 s: use `--model base.en` if it goes over 3 s. `--no-send` only transcribes; `--level` shows the mic's volume.
+
+`glasses` then asks Claude (`agents/interpret.ts`, Haiku, ~1 s) what the transcript is:
+
+| You say | It does |
+|---|---|
+| "um so move everything not finished in spring twelve to sprint thirteen" | request: *"Move all issues that were not finished in sprint 12 to sprint 13."* goes to the Jira agent; the receipt shows the clean instruction and what was heard |
+| "approve", "yes go ahead" | approves the **newest** pending plan (same as ✅) |
+| "reject", "no, cancel that" | rejects the newest pending plan; nothing changes in Jira |
+| "thank you", noise | "🤔 Didn't get that" on Telegram, nothing runs |
+
 The agent really changes the demo board, so restore it between rehearsals:
 
 ```bash
@@ -291,10 +328,10 @@ Files: `eyeclick/bus.py`, `eyeclick/app.py`, `run.py`, `eyeclick/sources/mock.py
 
 ## Agent team tasks (owner TBD)
 
-- [ ] `eyeclick/bridge/listener.py`: bus subscriber; blink activation starts and stops recording
-- [ ] `eyeclick/bridge/stt.py`: transcribe the recording with faster-whisper
-- [ ] `eyeclick/bridge/forge_client.py`: POST the text (request or approval) to the `glasses` web trigger
-- [ ] `eyeclick/bridge/live_state.py`: read SpacetimeDB and update the overlay from the main thread
+- [x] `eyeclick/bridge/listener.py`: long blink approves the pending plan or listens for a request (`--voice`, not yet tried with the glasses)
+- [x] `eyeclick/bridge/stt.py`: record until silence and transcribe with faster-whisper (Enter test: `python -m eyeclick.bridge`)
+- [x] `eyeclick/bridge/forge_client.py`: POST the request to the `glasses` web trigger (approvals: pending)
+- [x] `eyeclick/bridge/live_state.py`: poll SpacetimeDB every 2 s, overlay shows "Plan ready: say approve or blink"
 - [x] `forge-app/`: app created from `jira-issue-panel-ui-kit`, deployed and installed on the demo site
 - [ ] `forge-app/`: triggers (`glasses`, `telegram`), queue consumer, router, agents, actions, `lib/` (then uncomment their modules in `manifest.yml`)
 - [ ] `stdb/`: SpacetimeDB module with the request/job state
