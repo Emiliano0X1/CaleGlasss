@@ -98,9 +98,9 @@ export async function getPerson(accountId: string): Promise<Person | null> {
   }
 }
 
-/** Active and future sprints of the board. */
-export async function sprints(boardId = BOARD_ID): Promise<Sprint[]> {
-  const data = await get(route`/rest/agile/1.0/board/${String(boardId)}/sprint?state=active,future`);
+/** Sprints of the board: active and future ones by default; the reporter also asks for 'closed'. */
+export async function sprints(boardId = BOARD_ID, state = 'active,future'): Promise<Sprint[]> {
+  const data = await get(route`/rest/agile/1.0/board/${String(boardId)}/sprint?state=${state}`);
   return data.values.map((s: Sprint) => ({ id: s.id, name: s.name, state: s.state }));
 }
 

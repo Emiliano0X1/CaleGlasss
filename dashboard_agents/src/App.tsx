@@ -73,7 +73,8 @@ export default function App() {
         {agentsReady && agents.length === 0 && <p className="empty">No agent has reported yet.</p>}
         <ul>
           {[...agents].sort((a, b) => a.name.localeCompare(b.name)).map((a) => {
-            const stale = (now - ms(a.lastSeen)) / 1000 > AGENT_STALE_S
+            // "waiting for the jira agent" sends no heartbeats until it's queued again: not offline
+            const stale = !a.status.startsWith('waiting') && (now - ms(a.lastSeen)) / 1000 > AGENT_STALE_S
             return (
               <li key={a.name} className={stale ? 'stale' : ''}>
                 <strong>{a.name}</strong>

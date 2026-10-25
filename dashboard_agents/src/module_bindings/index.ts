@@ -41,6 +41,7 @@ import CreateWorkReducer from "./create_work_reducer";
 import FailProposalReducer from "./fail_proposal_reducer";
 import HeartbeatReducer from "./heartbeat_reducer";
 import LogEventReducer from "./log_event_reducer";
+import MemoryWriteReducer from "./memory_write_reducer";
 import RecordActionReducer from "./record_action_reducer";
 import RegisterPersonReducer from "./register_person_reducer";
 import RejectProposalReducer from "./reject_proposal_reducer";
@@ -55,6 +56,7 @@ import SubmitProposalReducer from "./submit_proposal_reducer";
 import ActionsRow from "./actions_table";
 import AgentsRow from "./agents_table";
 import EventsRow from "./events_table";
+import MemoryRow from "./memory_table";
 import PeopleRow from "./people_table";
 import PlanMessagesRow from "./plan_messages_table";
 import ProposalsRow from "./proposals_table";
@@ -100,6 +102,17 @@ const tablesSchema = __schema({
       { name: 'events_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, EventsRow),
+  memory: __table({
+    name: 'memory',
+    indexes: [
+      { accessor: 'path', name: 'memory_path_idx_btree', algorithm: 'btree', columns: [
+        'path',
+      ] },
+    ],
+    constraints: [
+      { name: 'memory_path_key', constraint: 'unique', columns: ['path'] },
+    ],
+  }, MemoryRow),
   people: __table({
     name: 'people',
     indexes: [
@@ -162,6 +175,7 @@ const reducersSchema = __reducers(
   __reducerSchema("fail_proposal", FailProposalReducer),
   __reducerSchema("heartbeat", HeartbeatReducer),
   __reducerSchema("log_event", LogEventReducer),
+  __reducerSchema("memory_write", MemoryWriteReducer),
   __reducerSchema("record_action", RecordActionReducer),
   __reducerSchema("register_person", RegisterPersonReducer),
   __reducerSchema("reject_proposal", RejectProposalReducer),

@@ -13,6 +13,8 @@
  *   actions     one row per change made in Jira while executing a proposal (before / after)
  *   plan_messages  the Telegram message each plan was sent in, so approving from the
  *               glasses can edit it ("Approved from the glasses")
+ *   memory      the agents' notes (path -> content): who "Ana" is, the report format, ...
+ *               Every agent gets them at the start of its prompt and can add one with save_note.
  *
  * Work item status: pending -> claimed (claim_work) -> proposed (submit_proposal)
  *   -> approved (approve_proposal) -> executing (start_execution) -> done (complete_proposal)
@@ -111,7 +113,16 @@ const planMessages = table(
   }
 );
 
-const spacetimedb = schema({ workItems, proposals, events, people, agents, actions, planMessages });
+const memory = table(
+  { name: 'memory', public: true },
+  {
+    path: t.string().primaryKey(),    // e.g. 'people/ana', 'reporter/report-format'
+    content: t.string(),
+    updated_at: t.timestamp(),
+  }
+);
+
+const spacetimedb = schema({ workItems, proposals, events, people, agents, actions, planMessages, memory });
 export default spacetimedb;
 
 // If a work item with that request_id already exists it does nothing: forge-app can retry without duplicates.
@@ -332,3 +343,16 @@ export const save_plan_message = spacetimedb.reducer(
     }
   }
 );
+
+// Creates the note or replaces it if that path already exists (the newest version wins).
+export const memory_write = spacetimedb.reducer({ path: t.string(), content: t.string() }, (ctx, { path, content }) => {
+  if (!path.trim() || !content.trim()) {
+    throw new SenderError('path and content are required');
+  }
+  const row = { path, content, updated_at: ctx.timestamp };
+  if (ctx.db.memory.path.find(path)) {
+    ctx.db.memory.path.update(row);
+  } else {
+    ctx.db.memory.insert(row);
+  }
+});

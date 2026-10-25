@@ -20,6 +20,7 @@ Created with `spacetime init --lang typescript --server-only`. The module is in
 | `agents` | `name` (PK), `status`, `work_id`, `last_seen` (last heartbeat) |
 | `actions` | `id` (PK, auto), `proposal_id`, `type`, `target` (issue key), `before`, `after`, `date`: one row per change made in Jira |
 | `plan_messages` | `proposal_id` (PK), `chat_id`, `message_id`, `text`: the Telegram message each plan was sent in, so an approval from the glasses can edit it |
+| `memory` | `path` (PK, e.g. `people/ana`, `reporter/report-format`), `content`, `updated_at`: the agents' notes, at the start of every agent's prompt (`forge-app/src/agents/memory.ts`) |
 
 ## Reducers
 
@@ -37,8 +38,9 @@ Created with `spacetime init --lang typescript --server-only`. The module is in
 - `complete_proposal(id)`: the proposal and its work item become `done` (this unblocks `depends_on`).
 - `fail_proposal(id, error)`: an action failed halfway; proposal and work item become `failed`, the error goes to `events`.
 - `reject_proposal(id, person, via)`: only a `pending` proposal; it and its work item become `rejected`.
-- `set_work_status(id, status)`: closes work items no agent runs (voice approvals: `done`, voice input nobody understood: `unclear`).
+- `set_work_status(id, status)`: closes work items no agent runs (voice approvals: `done`, voice input nobody understood: `unclear`, a request the router split into work items: `routed`).
 - `save_plan_message(proposal_id, chat_id, message_id, text)`: called by the Jira agent right after it sends the plan.
+- `memory_write(path, content)`: creates or replaces a note (the agents' `save_note` tool).
 
 Work item status: `pending` → `claimed` → `proposed` → `approved` → `executing` → `done` (or `failed`).
 Proposal status: `pending` → `approved` → `executing` → `done` (or `failed`).

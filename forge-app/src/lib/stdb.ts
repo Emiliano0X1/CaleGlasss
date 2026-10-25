@@ -32,6 +32,12 @@ export class StdbError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);
   }
+
+  /** The reducer refused the call (its SenderError, e.g. "depends on ... which isn't done"):
+   *  maincloud answers those with HTTP 530. Calling again gives the same answer. */
+  get rejected(): boolean {
+    return this.status === 530 || (this.status >= 400 && this.status < 500);
+  }
 }
 
 /** Calls a reducer. HTTP takes all its arguments as one JSON array, in order. */

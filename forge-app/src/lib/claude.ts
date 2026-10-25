@@ -4,7 +4,8 @@
  *
  *   ask(system, text)            one request, one text answer
  *   askJson(system, text, schema) one request, JSON that matches `schema` (agents/interpret.ts)
- *   createMessage({ ... })       the raw call, used by agents/loop.ts for tool use
+ *   createMessage({ ... })       the raw call, used by agents/loop.ts for tool use and by
+ *                                agents/router.ts (one forced tool call)
  *
  * The key is the ANTHROPIC_API_KEY encrypted Forge variable, never in the code.
  * Refusal fallback is on for MODEL: if it declines for safety reasons, the API retries the same
@@ -59,6 +60,7 @@ export interface MessagesRequest {
   system: string;
   messages: Message[];
   tools?: ToolDefinition[];
+  toolChoice?: string;  // name of a tool Claude must call (default: Claude decides); needs thinking 'disabled'
   effort?: Effort;      // claude-sonnet-5-5 defaults to 'high'
   maxTokens?: number;
   thinking?: 'disabled';                 // skip thinking for simple, latency-sensitive calls
@@ -98,7 +100,12 @@ export async function createMessage(request: MessagesRequest): Promise<MessagesR
       },
       system: request.system,
       messages: request.messages,
-      ...(request.tools?.length ? { tools: request.tools, tool_choice: { type: 'auto' } } : {}),
+      ...(request.tools?.length
+        ? {
+            tools: request.tools,
+            tool_choice: request.toolChoice ? { type: 'tool', name: request.toolChoice } : { type: 'auto' },
+          }
+        : {}),
     }),
   });
   const data = (await res.json()) as MessagesResponse & { error?: { message: string } };

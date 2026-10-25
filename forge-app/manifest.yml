@@ -3,7 +3,9 @@
 # Active today: the issue panel (src/frontend/index.jsx + resolvers/index.ts), the web
 # triggers `debug`, `glasses` (writes to SpacetimeDB, sends the receipt, queues the agent)
 # and `telegram` (bot webhook, ✅ approvals), and the `agent-runs` queue consumer (Claude
-# proposes a plan; after approval, execute/actions.ts applies it in Jira).
+# proposes a plan; after approval, execute/actions.ts applies it in Jira). The reporter agent
+# reads Jira and Confluence and publishes its report as a Confluence page (the app is also
+# installed on Confluence: forge install --product confluence).
 #
 # Secrets (encrypted Forge variables, never in the code): STDB_TOKEN, APPROVAL_SECRET,
 # TELEGRAM_BOT_TOKEN, TELEGRAM_SECRET, ANTHROPIC_API_KEY.
@@ -66,9 +68,10 @@ permissions:
     - read:issue:jira-software         # GET /rest/agile/1.0/issue/{key} (readIssue: current sprint)
     - write:jira-work                  # transition, assign, priority, comment (execute/actions.ts)
     - write:sprint:jira-software       # move issues to a sprint (execute/actions.ts)
-    # Enabled together with the agents' modules:
-    # - read:confluence-content.all
-    # - write:confluence-content
+    - read:page:confluence             # reporter: read_page, example report, parent page (lib/confluence.ts)
+    - write:page:confluence            # publish_page (execute/actions.ts)
+    - read:space:confluence            # space by key
+    - search:confluence                # search_pages (CQL)
   external:
     fetch:
       backend:

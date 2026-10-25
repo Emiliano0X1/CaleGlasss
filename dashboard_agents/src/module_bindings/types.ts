@@ -37,6 +37,13 @@ export const Events = __t.object("Events", {
 });
 export type Events = __Infer<typeof Events>;
 
+export const Memory = __t.object("Memory", {
+  path: __t.string(),
+  content: __t.string(),
+  updatedAt: __t.timestamp(),
+});
+export type Memory = __Infer<typeof Memory>;
+
 export const People = __t.object("People", {
   id: __t.string(),
   name: __t.string(),

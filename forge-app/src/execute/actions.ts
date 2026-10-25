@@ -1,7 +1,8 @@
 /**
- * Runs an approved plan: one function per action type of agents/jira_agent.ts.
+ * Runs an approved plan: one function per action type of agents/jira_agent.ts, plus
+ * publish_page from agents/reporter.ts.
  *
- * This is the only place where things change in Jira. queue/consumer.ts calls
+ * This is the only place where things change in Jira and Confluence. queue/consumer.ts calls
  * executeActions() after start_execution; every change is written to stdb with
  * record_action (type, issue, before, after) as soon as Jira accepts it, so the overlay and
  * dashboard see it live and a failure halfway still leaves a record of what was done.
@@ -11,12 +12,16 @@
  *   assign            PUT  /rest/api/3/issue/{key}/assignee
  *   change_priority   PUT  /rest/api/3/issue/{key}               (fields.priority)
  *   comment           POST /rest/api/3/issue/{key}/comment        (body in ADF)
+ *   publish_page      POST /wiki/api/v2/pages                     (Confluence, body in storage format;
+ *                                                                  the change's url links to the new page)
  *
  * Actions run in plan order; the first one that fails stops the run (ExecutionError, with
  * the changes made so far). Running the same plan twice is prevented in stdb:
  * start_execution only goes from approved to executing.
  */
 import type { ActionType, PlanAction } from '../agents/jira_agent';
+import type { PublishPageAction } from '../agents/reporter';
+import { createPage, getSpace } from '../lib/confluence';
 import {
   addComment,
   assignIssue,
@@ -30,12 +35,15 @@ import {
 } from '../lib/jira';
 import { call } from '../lib/stdb';
 
-/** One change made in Jira; also a row of the `actions` table. */
+export type Action = PlanAction | PublishPageAction;
+
+/** One change made in Jira or Confluence; also a row of the `actions` table (issue = its target). */
 export interface Change {
-  type: ActionType;
-  issue: string;
+  type: ActionType | 'publish_page';
+  issue: string;          // issue key, or the page id for publish_page
   before: string;
   after: string;
+  url?: string;           // publish_page: link to the new page
 }
 
 export class ExecutionError extends Error {
@@ -46,12 +54,12 @@ export class ExecutionError extends Error {
 
 const MAX_ISSUES_PER_MOVE = 50;   // Jira's limit for POST /sprint/{id}/issue
 
-export async function executeActions(proposalId: string, plan: PlanAction[]): Promise<Change[]> {
+export async function executeActions(proposalId: string, plan: Action[]): Promise<Change[]> {
   const done: Change[] = [];
   for (const step of steps(plan)) {
-    const issues = step.map((a) => a.issue).join(', ');
+    const issues = step.map((a) => ('issue' in a ? a.issue : a.title)).join(', ');
     try {
-      const changes = step[0].type === 'move_to_sprint' ? await moveToSprint(step) : [await runSingle(step[0])];
+      const changes = step[0].type === 'move_to_sprint' ? await moveToSprint(step as PlanAction[]) : [await runSingle(step[0])];
       for (const c of changes) {
         await call('record_action', [proposalId, c.type, c.issue, c.before, c.after]);
         done.push(c);
@@ -66,14 +74,14 @@ export async function executeActions(proposalId: string, plan: PlanAction[]): Pr
 }
 
 /** Groups consecutive moves to the same sprint into one step; every other action is its own step. */
-function steps(plan: PlanAction[]): PlanAction[][] {
-  const result: PlanAction[][] = [];
+function steps(plan: Action[]): Action[][] {
+  const result: Action[][] = [];
   for (const action of plan) {
     const last = result[result.length - 1];
     if (
       action.type === 'move_to_sprint' &&
       last?.[0].type === 'move_to_sprint' &&
-      last[0].sprint_id === action.sprint_id &&
+      (last[0] as PlanAction).sprint_id === action.sprint_id &&
       last.length < MAX_ISSUES_PER_MOVE
     ) {
       last.push(action);
@@ -84,8 +92,10 @@ function steps(plan: PlanAction[]): PlanAction[][] {
   return result;
 }
 
-function runSingle(action: PlanAction): Promise<Change> {
+function runSingle(action: Action): Promise<Change> {
   switch (action.type) {
+    case 'publish_page':
+      return publishPage(action);
     case 'transition':
       return transition(action);
     case 'assign':
@@ -138,4 +148,13 @@ async function comment(action: PlanAction): Promise<Change> {
   const text = String(action.text ?? '');
   await addComment(action.issue, text);
   return { type: 'comment', issue: action.issue, before: '', after: text };
+}
+
+async function publishPage(action: PublishPageAction): Promise<Change> {
+  const space = await getSpace(action.space);
+  if (!space) {
+    throw new Error(`space ${action.space} doesn't exist anymore`);
+  }
+  const page = await createPage(space.id, action.parent_id, action.title, action.content);
+  return { type: 'publish_page', issue: page.id, before: '', after: action.title, url: page.url };
 }

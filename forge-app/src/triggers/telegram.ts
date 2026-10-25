@@ -9,7 +9,9 @@
  * 2. Logs what arrived (message text or button callback_data): `forge logs` / `forge tunnel`.
  * 3. ✅ Approve button (callback_data ap:<proposal id>), only from someone in the `people` table:
  *      execute/approve.ts                         approve_proposal + { type: 'execute' } to the queue;
- *                                                 not pending -> "Already approved", nothing queued
+ *                                                 not pending -> nothing queued, and the plan message
+ *                                                 says "Already approved by NAME via VIA" (e.g. the
+ *                                                 panel won the race)
  *      answer the button and edit the plan message to "Approved, executing…" (this drops the button)
  *    Any other button just gets answered, so it stops showing the loading clock.
  * Always answers 200 once the secret is valid: otherwise Telegram keeps retrying the same update.
@@ -92,16 +94,33 @@ async function approve(callback: CallbackQuery, proposalId: string): Promise<str
     return "Couldn't approve the plan, try again";
   }
   if (result === 'already') {
-    return 'Already approved';
+    const line = await alreadyDecided(proposalId);
+    await editPlan(callback, line);
+    return line;
   }
   const status = result === 'approved' ? 'Approved, executing…' : "Approved, but the execution couldn't be queued";
-  if (callback.message) {
-    const { chat, message_id, text } = callback.message;
-    try {
-      await editMessage(String(chat.id), message_id, `${text ?? ''}\n\n✅ ${status} (${name})`);
-    } catch (e) {
-      console.error('telegram: editMessage failed:', e);
-    }
-  }
+  await editPlan(callback, `✅ ${status} (${name})`);
   return status;
+}
+
+/** "Already approved by Emiliano via panel" (or rejected), from the proposal in stdb. */
+async function alreadyDecided(proposalId: string): Promise<string> {
+  const [row] = await sql(`SELECT status, approved_by, approved_via FROM proposals WHERE id = '${proposalId}'`);
+  const [status, by, via] = (row ?? []).map(String);
+  const [person] = SAFE_ID.test(by ?? '') ? await sql(`SELECT name FROM people WHERE id = '${by}'`) : [];
+  const who = person ? String(person[0]) : by || 'someone';
+  return `${status === 'rejected' ? '❌ Already rejected' : '✅ Already approved'} by ${who} via ${via || '?'}`;
+}
+
+/** Adds a line to the plan message the button is on; that also drops the button. */
+async function editPlan(callback: CallbackQuery, line: string): Promise<void> {
+  if (!callback.message) {
+    return;
+  }
+  const { chat, message_id, text } = callback.message;
+  try {
+    await editMessage(String(chat.id), message_id, `${text ?? ''}\n\n${line}`);
+  } catch (e) {
+    console.error('telegram: editMessage failed:', e);
+  }
 }

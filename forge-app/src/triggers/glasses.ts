@@ -21,21 +21,20 @@
  * 4. agents/interpret.ts (Claude, ~1 s) cleans up the transcript and says what it is:
  *    - request:  create_work with the clean instruction; in parallel log_event, the receipt
  *                "📥 Got your request" (+ what was heard) to the person's Telegram, and
- *                { type: 'agent', work_id, person } to the `agent-runs` queue.
+ *                { type: 'router', work_id, person } to the `agent-runs` queue: the router
+ *                (agents/router.ts) splits it into work items and queues an agent for each.
  *    - approve / reject: applies to the newest pending plan (execute/approve.ts), the same as
  *                the ✅ button; Telegram gets "✅ Approved by voice" / "❌ Rejected".
  *    - unclear:  nothing runs; Telegram gets "🤔 Didn't get that".
  *    Every input is a work item (type = intent) so the request_id check above covers it;
  *    approvals and unclear input are closed right away with set_work_status.
  *    A failed Telegram message or queue push doesn't fail the request: the response says
- *    receipt: sent | no_chat | failed and agent: queued | failed.
- *
- * The router (agents/router.ts) will later decide which agent takes a request.
+ *    receipt: sent | no_chat | failed and router: queued | failed.
  */
 import { Queue } from '@forge/events';
 import { interpret } from '../agents/interpret';
 import { approve, latestPending, reject, updatePlanMessage } from '../execute/approve';
-import { QUEUE_KEY, type AgentRun } from '../queue/consumer';
+import { QUEUE_KEY, type RouterRun } from '../queue/consumer';
 import { call, sql, StdbError } from '../lib/stdb';
 import { send } from '../lib/telegram';
 import {
@@ -48,7 +47,7 @@ import {
   type WebTriggerResponse,
 } from '../lib/webtrigger';
 
-const agentRuns = new Queue<AgentRun>({ key: QUEUE_KEY });
+const agentRuns = new Queue<RouterRun>({ key: QUEUE_KEY });
 
 interface GlassesRequest {
   type: 'request' | 'approve';
@@ -104,13 +103,13 @@ async function handle(request: WebTriggerRequest): Promise<WebTriggerResponse> {
     if (intent === 'request') {
       await call('create_work', [workId, 'request', instruction, request_id, '']);
       const heard = instruction !== text ? `\n🎙️ Heard: "${text}"` : '';
-      const [, receipt, agent] = await Promise.all([
+      const [, receipt, router] = await Promise.all([
         call('log_event', [person, `request ${request_id}: ${instruction}`]),
         notify(person, `📥 Got your request: ${instruction}${heard}`),
-        enqueueAgent(workId, person),
+        enqueueRouter(workId, person),
       ]);
-      console.log(`glasses: created ${workId} for ${person}, receipt ${receipt}, agent ${agent}`);
-      return json(200, { ...base, instruction, receipt, agent });
+      console.log(`glasses: created ${workId} for ${person}, receipt ${receipt}, router ${router}`);
+      return json(200, { ...base, instruction, receipt, router });
     }
 
     await call('create_work', [workId, intent, text, request_id, '']);
@@ -205,9 +204,9 @@ async function notify(person: string, message: string): Promise<'sent' | 'no_cha
   }
 }
 
-async function enqueueAgent(workId: string, person: string): Promise<'queued' | 'failed'> {
+async function enqueueRouter(workId: string, person: string): Promise<'queued' | 'failed'> {
   try {
-    const { jobId } = await agentRuns.push({ body: { type: 'agent', work_id: workId, person } });
+    const { jobId } = await agentRuns.push({ body: { type: 'router', work_id: workId, person } });
     console.log(`glasses: queued ${workId} on ${QUEUE_KEY} (job ${jobId})`);
     return 'queued';
   } catch (e) {
