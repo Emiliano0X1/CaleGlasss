@@ -5,6 +5,7 @@ import { timingSafeEqual } from 'crypto';
 
 // TODO: replace with Forge's web trigger types if the SDK exports them.
 export interface WebTriggerRequest {
+  method?: string;
   body: string;
   headers: Record<string, string[]>;
   queryParameters?: Record<string, string[]>;
@@ -23,6 +24,28 @@ export function json(statusCode: number, body: unknown): WebTriggerResponse {
     headers: { 'Content-Type': ['application/json'] },
     body: JSON.stringify(body),
   };
+}
+
+/**
+ * CORS, for a web trigger the browser calls (the dashboard's Approve button): the browser
+ * first sends OPTIONS (preflight, because of the x-secret header) and only then the POST.
+ * Origin '*' is enough here: the request carries no cookies, the x-secret header is what
+ * authorizes it.
+ */
+const CORS_HEADERS: Record<string, string[]> = {
+  'Access-Control-Allow-Origin': ['*'],
+  'Access-Control-Allow-Methods': ['POST, OPTIONS'],
+  'Access-Control-Allow-Headers': ['Content-Type, x-secret'],
+  'Access-Control-Max-Age': ['600'],
+};
+
+export function withCors(response: WebTriggerResponse): WebTriggerResponse {
+  return { ...response, headers: { ...response.headers, ...CORS_HEADERS } };
+}
+
+/** Answer to a CORS preflight (OPTIONS). */
+export function preflight(): WebTriggerResponse {
+  return { statusCode: 204, headers: { ...CORS_HEADERS }, body: '' };
 }
 
 /** First value of a header, case-insensitive (HTTP header names are). */

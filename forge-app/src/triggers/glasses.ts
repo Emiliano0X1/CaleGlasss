@@ -4,11 +4,15 @@
  *
  *   header  x-secret: <APPROVAL_SECRET>
  *   body    { "type": "request", "text": "<Whisper transcript>", "person": "me", "request_id": "r1" }
- *           { "type": "approve", "proposal_id": "p-...", "person": "me", "request_id": "r2" }
+ *           { "type": "approve", "proposal_id": "p-...", "person": "me", "request_id": "r2", "via": "panel" }
  *
  * "approve" comes from a long blink (or the word "approve") while the overlay shows a pending
- * plan (bridge/live_state.py): approve_proposal with via 'glasses', execute queued, and the
- * plan's Telegram message edited to "Approved from the glasses".
+ * plan (bridge/live_state.py), or from the dashboard's Approve button (via "panel"; default
+ * "glasses"): approve_proposal with that via, execute queued, and the plan's Telegram message
+ * edited to "Approved from the glasses" / "from the panel".
+ *
+ * The dashboard calls it from the browser, so every answer carries CORS headers and an
+ * OPTIONS preflight gets a 204 (lib/webtrigger.ts withCors / preflight).
  *
  * 1. Wrong or missing x-secret -> 401 and nothing is created.
  * 2. Invalid body -> 400.
@@ -34,7 +38,15 @@ import { approve, latestPending, reject, updatePlanMessage } from '../execute/ap
 import { QUEUE_KEY, type AgentRun } from '../queue/consumer';
 import { call, sql, StdbError } from '../lib/stdb';
 import { send } from '../lib/telegram';
-import { header, json, secretMatches, type WebTriggerRequest, type WebTriggerResponse } from '../lib/webtrigger';
+import {
+  header,
+  json,
+  preflight,
+  secretMatches,
+  withCors,
+  type WebTriggerRequest,
+  type WebTriggerResponse,
+} from '../lib/webtrigger';
 
 const agentRuns = new Queue<AgentRun>({ key: QUEUE_KEY });
 
@@ -42,13 +54,24 @@ interface GlassesRequest {
   type: 'request' | 'approve';
   text: string;          // '' for approve
   proposal_id: string;   // '' for request
+  via: Via;              // approve only: where the approval came from
   person: string;
   request_id: string;
 }
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;   // request_id and person: also makes them safe inside SQL strings
 
+type Via = 'glasses' | 'panel';
+const VIA_LABEL: Record<Via, string> = { glasses: 'the glasses', panel: 'the panel' };
+
 export async function glasses(request: WebTriggerRequest): Promise<WebTriggerResponse> {
+  if (request.method === 'OPTIONS') {
+    return preflight();
+  }
+  return withCors(await handle(request));
+}
+
+async function handle(request: WebTriggerRequest): Promise<WebTriggerResponse> {
   if (!secretMatches(header(request, 'x-secret'), process.env.APPROVAL_SECRET)) {
     return json(401, { error: 'invalid x-secret' });
   }
@@ -57,7 +80,7 @@ export async function glasses(request: WebTriggerRequest): Promise<WebTriggerRes
   if (typeof parsed === 'string') {
     return json(400, { error: parsed });
   }
-  const { type, text, proposal_id, person, request_id } = parsed;
+  const { type, text, proposal_id, via, person, request_id } = parsed;
 
   try {
     const existing = await sql(`SELECT id FROM work_items WHERE request_id = '${request_id}'`);
@@ -69,9 +92,9 @@ export async function glasses(request: WebTriggerRequest): Promise<WebTriggerRes
     const workId = `w-${request_id}`;
     if (type === 'approve') {
       await call('create_work', [workId, 'approve', `approve ${proposal_id}`, request_id, '']);
-      const decision = await approveFromGlasses(proposal_id, person);
+      const decision = await approveFrom(via, proposal_id, person);
       await call('set_work_status', [workId, 'done']);
-      await call('log_event', [person, `approve from the glasses: ${decision.result} ${proposal_id}`]);
+      await call('log_event', [person, `approve from ${VIA_LABEL[via]}: ${decision.result} ${proposal_id}`]);
       return json(200, { ok: true, duplicate: false, work_id: workId, request_id, intent: 'approve', ...decision });
     }
 
@@ -119,7 +142,7 @@ async function decide(
     return { result: 'nothing_pending', receipt };
   }
   if (intent === 'approve') {
-    return approveFromGlasses(plan.id, person);
+    return approveFrom('glasses', plan.id, person);
   }
   const name = await nameOf(person);
   if (!name) {
@@ -135,8 +158,9 @@ async function decide(
   return { result, proposal_id: plan.id, receipt };
 }
 
-/** approve_proposal (via 'glasses') + execute queued + the plan's Telegram message edited. */
-async function approveFromGlasses(
+/** approve_proposal (with `via`) + execute queued + the plan's Telegram message edited. */
+async function approveFrom(
+  via: Via,
   proposalId: string,
   person: string
 ): Promise<{ result: string; proposal_id: string; receipt: string }> {
@@ -148,14 +172,14 @@ async function approveFromGlasses(
   if (exists.length === 0) {
     return { result: 'not_found', proposal_id: proposalId, receipt: 'none' };
   }
-  const result = await approve(proposalId, person, 'glasses');
+  const result = await approve(proposalId, person, via);
   if (result === 'already') {
     return { result, proposal_id: proposalId, receipt: 'none' };   // the plan message already says how it went
   }
   const line =
     result === 'approved'
-      ? `✅ Approved from the glasses (${name}), executing…`
-      : `✅ Approved from the glasses (${name}), but the execution couldn't be queued`;
+      ? `✅ Approved from ${VIA_LABEL[via]} (${name}), executing…`
+      : `✅ Approved from ${VIA_LABEL[via]} (${name}), but the execution couldn't be queued`;
   const receipt = (await updatePlanMessage(proposalId, line)) ? 'edited' : await notify(person, line);
   return { result, proposal_id: proposalId, receipt };
 }
@@ -214,10 +238,14 @@ function parse(body: string): GlassesRequest | string {
     if (typeof data.proposal_id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(data.proposal_id)) {
       return 'proposal_id is required for "approve"';
     }
-    return { type: 'approve', text: '', proposal_id: data.proposal_id, person, request_id: data.request_id };
+    const via = data.via ?? 'glasses';
+    if (via !== 'glasses' && via !== 'panel') {
+      return 'via must be "glasses" or "panel"';
+    }
+    return { type: 'approve', text: '', proposal_id: data.proposal_id, via, person, request_id: data.request_id };
   }
   if (typeof data.text !== 'string' || !data.text.trim()) {
     return 'text is required';
   }
-  return { type: 'request', text: data.text.trim(), proposal_id: '', person, request_id: data.request_id };
+  return { type: 'request', text: data.text.trim(), proposal_id: '', via: 'glasses', person, request_id: data.request_id };
 }

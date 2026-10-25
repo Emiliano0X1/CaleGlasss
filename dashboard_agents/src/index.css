@@ -1,0 +1,97 @@
+:root {
+  --bg: #f6f6f8;
+  --card: #ffffff;
+  --text: #1d1b22;
+  --muted: #6b6375;
+  --border: #e3e1e8;
+  --accent: #6d3bff;
+  --ok: #1f9d55;
+  --warn: #c27c0e;
+  --bad: #d63c3c;
+  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+  color-scheme: light dark;
+  font: 15px/1.45 var(--sans);
+  color: var(--text);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121116;
+    --card: #1c1a22;
+    --text: #ece9f2;
+    --muted: #9a93a6;
+    --border: #2e2b36;
+    --accent: #a07cff;
+  }
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); }
+code { font-family: var(--mono); font-size: 0.85em; color: var(--muted); }
+small { color: var(--muted); }
+ul, ol { margin: 0; padding: 0; list-style: none; }
+
+main {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-areas:
+    'header header header'
+    'agents pending log'
+    'work pending log'
+    'work events events';
+  gap: 16px;
+  padding: 16px;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+@media (max-width: 1000px) {
+  main { grid-template-columns: 1fr; grid-template-areas: 'header' 'agents' 'pending' 'work' 'events' 'log'; }
+}
+
+header { grid-area: header; display: flex; align-items: center; gap: 12px; }
+h1 { margin: 0; font-size: 1.5rem; }
+h2 { margin: 0 0 10px; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+
+section { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; min-width: 0; }
+section > ul { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+section > ul > li { padding: 8px 0; border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+section > ul > li:first-child { border-top: none; }
+.agents { grid-area: agents; }
+.work { grid-area: work; }
+.pending { grid-area: pending; }
+.events { grid-area: events; }
+.log { grid-area: log; }
+.empty { color: var(--muted); margin: 0; }
+
+.conn { font-size: 0.8rem; padding: 2px 8px; border-radius: 99px; border: 1px solid currentColor; }
+.conn.on { color: var(--ok); }
+.conn.off { color: var(--warn); }
+
+.agents li .status { color: var(--accent); font-weight: 600; }
+.agents li.stale { opacity: 0.5; }
+.agents li.stale .status { color: var(--muted); }
+
+.text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.waiting { width: 100%; color: var(--warn); }
+.error { width: 100%; color: var(--bad); }
+.row { display: flex; align-items: center; gap: 8px; width: 100%; }
+.row > small { flex: 1; }
+
+.pending li, .log li { flex-direction: column; align-items: stretch; }
+.pending .summary { font-weight: 600; }
+.pending ol { display: flex; flex-direction: column; gap: 2px; padding-left: 4px; }
+.changes { padding-left: 4px; font-size: 0.9em; }
+
+.badge { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; background: var(--border); color: var(--muted); }
+.badge.claimed, .badge.proposed, .badge.approved, .badge.executing { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.badge.done { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.badge.failed, .badge.rejected, .badge.unclear { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
+
+button {
+  font: inherit; font-weight: 600; padding: 6px 16px; border-radius: 6px; border: none;
+  background: var(--ok); color: #fff; cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: default; }
