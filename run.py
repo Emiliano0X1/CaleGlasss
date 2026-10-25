@@ -5,7 +5,7 @@ Uso:
     python run.py --video ojo.mp4     # pipeline real sobre un video grabado
     python run.py --camera 1          # pipeline real con la cámara endoscópica
     python run.py --camera 1 --demo   # igual, con el monitor en modo demo
-    python run.py --mock --voice      # + voice: "Hey glasses, ...", long blink (F8 held 3 s) approves, F10 = talk
+    python run.py --mock --voice      # + voice: "Hey glasses, ..." (dictation's mic) -> Jira; "Hey glasses, approve"
 """
 import argparse
 
@@ -19,7 +19,7 @@ def main():
     mode.add_argument("--video", metavar="RUTA", help="usar un video grabado")
     mode.add_argument("--camera", type=int, metavar="N", help="índice de cámara")
     p.add_argument("--demo", action="store_true", help="monitor en modo demo")
-    p.add_argument("--voice", action="store_true", help="voice bridge: requests and approvals to Forge")
+    p.add_argument("--voice", action="store_true", help='voice bridge: "Hey glasses, ..." requests and approvals to Forge')
     args = p.parse_args()
     app.start(mock=args.mock, video=args.video, camera=args.camera, demo=args.demo, voice=args.voice)
 

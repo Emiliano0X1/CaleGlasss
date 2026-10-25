@@ -24,8 +24,9 @@ donde estabas escribiendo, así el texto dictado cae ahí y no en el indicador.
 Se puede arrastrar con el mouse para moverlo (no tiene barra de título).
 
 set_note(text): second, smaller line under the state, for the voice bridge (--voice):
-"Plan ready: say approve or blink", "Listening…". Empty text hides it. It's separate from
-the state line, so eye events never overwrite it.
+'Plan ready: "Hey glasses, approve"', "Sending to Jira…". Empty text hides it. It's separate
+from the state line, so eye events never overwrite it. The window's height (_resize) adds up
+the state row, the dictation preview and this line, so neither hides the other.
 """
 import logging
 import sys
@@ -70,6 +71,9 @@ CALIBRATED_S = 1.5
 TICK_MS = 200
 GEOMETRY = "260x56+20+20"
 GEOMETRY_MIC = "340x56+20+20"
+BASE_H = 56             # la fila de arriba (estado + mic)
+NOTE_H = 28             # la línea del bridge (set_note)
+NOTE_BG = "#1f2a36"
 
 
 def text_for(ev):
@@ -126,9 +130,14 @@ class Overlay:
         self.preview = tk.Label(self.win, font=("Helvetica", 13), fg="white", bg="#222",
                                 justify="left", anchor="w", padx=8, pady=6)
         self._width = int((GEOMETRY if on_dictate is None else GEOMETRY_MIC).split("x")[0])
+        self._preview_text = None
+        self.note = tk.Label(self.win, text="", font=("Helvetica", 10, "bold"), fg="white", bg=NOTE_BG,
+                             wraplength=self._width - 10)
+        self._note_text = ""
         _no_activate(self.win)
-        self.label.bind("<ButtonPress-1>", self._start_drag)
-        self.label.bind("<B1-Motion>", self._on_drag)
+        for widget in (self.label, self.note):
+            widget.bind("<ButtonPress-1>", self._start_drag)
+            widget.bind("<B1-Motion>", self._on_drag)
         self._tick()
 
     def show(self, text, warn=False, hold=None, sticky=False):
@@ -152,12 +161,11 @@ class Overlay:
             return
         if text and not self._note_text:
             self.note.pack(fill="x", side="bottom")
-            self.win.geometry(SIZE_WITH_NOTE)
         elif not text:
             self.note.pack_forget()
-            self.win.geometry(SIZE)
         self.note.config(text=text)
         self._note_text = text
+        self._resize()
 
     def set_paused(self, paused):
         self.paused = paused
@@ -199,15 +207,23 @@ class Overlay:
             self.show(IDLE)
 
     def _show_preview(self, text):
-        h = 56
+        self._preview_text = text or None
         if text:
             self.preview.config(text=f"\u201c{text}\u201d\n{PREVIEW_HINT}", wraplength=self._width - 16)
             # el texto va debajo de la fila de arriba (mic + estado), no a su lado
             self.preview.pack(side="bottom", fill="x", before=self.mic or self.label)
-            self.win.update_idletasks()
-            h += self.preview.winfo_reqheight()
         else:
             self.preview.pack_forget()
+        self._resize()
+
+    def _resize(self):
+        """Alto = fila de arriba + preview del dictado (si hay) + línea del bridge (si hay)."""
+        h = BASE_H
+        if self._preview_text:
+            self.win.update_idletasks()
+            h += self.preview.winfo_reqheight()
+        if self._note_text:
+            h += NOTE_H
         self.win.geometry(f"{self._width}x{h}")
 
     def close(self):

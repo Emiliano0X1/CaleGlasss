@@ -31,11 +31,12 @@ GYRO_TIMEOUT_S) los parpadeos no hacen clic: al sacudir la cabeza es fácil cerr
 
 Agregar una pieza nueva (voz, agente...) = crear un suscriptor o fuente y registrarlo aquí.
 
-Voice bridge (--voice, eyeclick/bridge/): "Hey glasses, ..." starts a Jira command (the mic
-is always on, it beeps through feedback when it hears the phrase); its listener is one more
-subscriber (long blink = approve the pending plan or listen for a request); F10 = talk
-(fallback); each tick copies Bridge.note() to the overlay's second line. Without --voice
-nothing of it is loaded.
+Voice bridge (--voice, eyeclick/bridge/): one microphone and one Whisper, dictation's. Every
+transcript goes first to Bridge.heard() (dictation's voice_hook): "Hey glasses, ..." beeps and
+goes to Jira instead of being typed, and "Hey glasses, approve" approves the pending plan.
+With --voice the mic is always open (start_auto) even if DICTATION_AUTO is off, so the phrase
+works with the focus anywhere; F11 + "Hey glasses, ..." also works. Each tick copies
+Bridge.note() to the overlay's second line. Without --voice nothing of it is loaded.
 """
 import logging
 import queue
@@ -86,7 +87,12 @@ class App:
         self.mouse = mouse.MouseActions(on_action=self._notes.append)
         self.mouse.intercept = self._dictation_blink
         self.feedback = feedback.Feedback()
-        self.dictation = dictation.Dictation(on_state=lambda *s: self._dictation_states.put_nowait(s))
+        self.bridge = None
+        if voice:
+            from eyeclick.bridge import Bridge   # here: --voice loads httpx and reads eyeclick/bridge/.env
+            self.bridge = Bridge(beep=self.feedback.beep)
+        self.dictation = dictation.Dictation(on_state=lambda *s: self._dictation_states.put_nowait(s),
+                                             voice_hook=self.bridge.heard if self.bridge else None)
         self.overlay = overlay.Overlay(self.root, self.source, on_dictate=self.request_dictation)
         self.monitor = monitor.Monitor(self.root, self.source, on_pause=self.request_pause,
                                        on_drag=self.request_drag, demo=demo)
@@ -110,7 +116,7 @@ class App:
                 self.bridge.start()
             self._start_hotkeys()
             self.dictation.preload()
-            if DICTATION_AUTO:
+            if DICTATION_AUTO or self.bridge is not None:     # "Hey glasses" needs the mic open
                 self.dictation.start_auto()
             self.gyro.start()
             self._tick()
@@ -139,6 +145,8 @@ class App:
         log.info("Cerrando EyeClick")
         self._safe(self.source.stop)
         self._safe(self.dictation.close)
+        if self.bridge is not None:
+            self._safe(self.bridge.stop)
         self._safe(self.gyro.stop)
         self._safe(self.monitor.close)      # termina de escribir el video si se estaba grabando
         self._safe(self.overlay.close)
@@ -173,6 +181,8 @@ class App:
             self._show_dictation(state, note)
         self._check_gyro()
         self.bus.dispatch()
+        if self.bridge is not None:
+            self._safe(lambda: self.overlay.set_note(self.bridge.note()))
         if self._notes:
             notes, self._notes[:] = self._notes[:], []
             drag = self.mouse.drag

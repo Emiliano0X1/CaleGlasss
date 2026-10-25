@@ -36,6 +36,12 @@ preview: una tecla suelta cuesta poco deshacer):
     "enter"  -> Enter
     "delete" -> Ctrl+Backspace (borra la palabra anterior)
 
+Voz para Jira (voice_hook, con --voice: eyeclick/bridge, Bridge.heard): antes que nada, cada
+texto transcrito pasa por voice_hook(texto). Si devuelve una nota ("Hey glasses, ..." es para
+Jira), no se escribe, no hay preview ni tecla: solo esa nota. Con un hook, el modo automático
+también arranca SIN cuadro de texto, para oír "Hey glasses" desde cualquier lado; lo que se
+diga ahí y no sea para el hook se descarta callado (solo se dicta en cuadros de texto).
+
 Todo corre en un hilo propio: on_state(estado, nota) se llama desde ese hilo, así que
 app.py lo pasa por una cola al hilo principal antes de tocar tkinter.
 El modelo se carga en segundo plano al arrancar (preload) para que el primer dictado
@@ -251,14 +257,17 @@ def _uia_probe():
 
 class Dictation:
     def __init__(self, on_state=None, transcriber=None, open_mic=_open_mic, type_text=_type_text,
-                 end=SpeechEnd, gate=VoiceGate, preview_s=DICTATION_PREVIEW_S, press_key=_press_key):
+                 end=SpeechEnd, gate=VoiceGate, preview_s=DICTATION_PREVIEW_S, press_key=_press_key,
+                 voice_hook=None):
         self.on_state = on_state or (lambda state, note=None: None)
+        self.voice_hook = voice_hook    # texto -> nota si era para él (no se escribe), o None
         self.press_key = press_key
         self.transcriber = transcriber or WhisperTranscriber()
         self.open_mic, self.type_text, self.end, self.gate = open_mic, type_text, end, gate
         self.preview_s = preview_s
         self.state = "idle"             # idle / listening / transcribing / preview / typing
         self.auto = False               # la frase actual arrancó sola (sin bip, va a preview)
+        self.for_text = True            # ...con el foco en un cuadro de texto (si no, solo cuenta el hook)
         self.pending = None             # texto en preview
         self.suspended = False          # en pausa no arranca solo
         self.focus = None
@@ -294,7 +303,7 @@ class Dictation:
             if self._auto_thread is not None:
                 self._manual.set()      # el hilo automático ya tiene el micrófono abierto
             else:
-                self.auto = False
+                self.auto, self.for_text = False, True
                 self._set("listening")
                 self._thread = threading.Thread(target=self._run, daemon=True)
                 self._thread.start()
@@ -365,7 +374,7 @@ class Dictation:
                     continue
                 if self._manual.is_set():
                     self._manual.clear()
-                    self.auto = False
+                    self.auto, self.for_text = False, True
                     self._set("listening")
                     self._finish(*self._listen(blocks, [], self.end()))
                     gate.reset()
@@ -375,8 +384,10 @@ class Dictation:
                     continue
                 preroll.append(block)
                 started = gate.feed(_rms(block), len(block) / SR)
-                if started and not self.suspended and self.focus.editable:
+                listen_anywhere = self.voice_hook is not None      # "Hey glasses" sin cuadro de texto
+                if started and not self.suspended and (self.focus.editable or listen_anywhere):
                     self.auto = True
+                    self.for_text = self.focus.editable
                     self._stop.clear()
                     self._set("listening")
                     self._finish(*self._listen(blocks, list(preroll), self.end(noise=gate.noise)))
@@ -419,6 +430,13 @@ class Dictation:
         if not text:
             self._set("idle", quiet_note)
             return
+        hook_note = self._ask_hook(text)
+        if hook_note:
+            self._set("idle", hook_note)
+            return
+        if self.auto and not self.for_text:
+            self._set("idle")           # fuera de un cuadro de texto solo cuenta el hook
+            return
         command = command_for(text)
         if command is not None:
             key, note = command
@@ -438,6 +456,15 @@ class Dictation:
             self._set("preview", text)
         else:
             self._type(text)
+
+    def _ask_hook(self, text):
+        if self.voice_hook is None:
+            return None
+        try:
+            return self.voice_hook(text)
+        except Exception:
+            log.warning("Falló voice_hook", exc_info=True)
+            return None
 
     def _type(self, text):
         try:

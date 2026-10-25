@@ -143,7 +143,7 @@ CaleGlasss/
 │   │   ├── monitor.py        # window with the eye video, status and controls
 │   │   └── overlay.py        # small floating indicator
 │   └── bridge/               # glasses-bridge: voice + agents, same process as EyeClick  (stubs)
-│       ├── listener.py       # long blink: approve the pending plan or listen (bus subscriber)
+│       ├── listener.py       # sends "Hey glasses" commands (requests / approvals); standalone wake loop
 │       ├── stt.py            # faster-whisper
 │       ├── forge_client.py   # POST to the Forge `glasses` web trigger (request or approve)
 │       └── live_state.py     # polls SpacetimeDB for the newest pending plan (overlay note)
@@ -215,8 +215,8 @@ Right click: `EYE_CLOSED → STAGE_LEFT → STAGE_RIGHT → CLICK_RIGHT`. Drag: 
 
 ```
 glasses laptop (Python, one process)                    cloud
-eyeclick bus --blink activation--> bridge/listener.py
-                                   -> stt.py (faster-whisper, local)
+actions/dictation.py (lavalier mic + Whisper, local)
+  --"Hey glasses, ..."--> bridge Bridge.heard() -> listener.py
                                    -> forge_client.py --POST--> forge-app triggers/glasses.ts
                                                                   -> queue/consumer.ts
                                                                      -> agents/router.ts -> jira_agent / reporter (agents/loop.ts + Claude)
@@ -229,14 +229,13 @@ Telegram -> triggers/telegram.ts (✅ approve, written requests) -> same queue
 
 How the bridge plugs into EyeClick, without changing what already works:
 
-- **`listener.py` is one more bus subscriber.** It gets a `handle(event)` and is registered in `app.py` like `mouse` or `feedback`. Starting the mic is triggered by a blink gesture.
-- **Nothing slow runs in the main thread.** Recording, `stt.py` and `forge_client.py` run in their own thread; `handle()` only starts or stops them. Otherwise `bus.dispatch()` and the clicks freeze while Whisper transcribes.
+- **One microphone, one Whisper: dictation's.** `actions/dictation.py` hands every transcript to `Bridge.heard()` first (its `voice_hook`). If it starts with "Hey glasses" it goes to Jira and isn't typed; anything else is dictation as usual. No blink starts or approves anything: the 3 s blink is drag.
+- **Nothing slow runs in the main thread.** Dictation transcribes on its own thread and `forge_client.py` sends on another; `heard()` only starts the send. Otherwise `bus.dispatch()` and the clicks freeze while Whisper transcribes.
 - **`live_state.py` never touches tkinter directly.** It reads SpacetimeDB in its own thread and hands each update to the main thread (the same way `app.py` already does with F9 pause requests). Then the main thread calls `overlay.show(...)`.
-- **Approvals:** the wearer approves a plan either from the glasses (`forge_client.py` → `glasses.ts`, "approve") or from Telegram (`telegram.ts`, ✅ button). Both go into the same queue.
+- **Approvals:** the wearer approves a plan by voice from the glasses ("Hey glasses, approve": `forge_client.py` → `glasses.ts`), from the dashboard's Approve button, or from Telegram (`telegram.ts`, ✅ button). All go into the same queue, and only the first one counts.
 
 Open decisions (agree on them before writing code):
 
-- **Which gesture activates the mic.** It must not collide with clicks (0.5–3.0 s) or rest (> 3 s). If it needs a new event, it means changing `events.py`, so both SWEs have to agree.
 - **Owner** of `eyeclick/bridge/`, `forge-app/`, `stdb/` and `dashboard/`.
 - **How to start it:** for example, a `run.py` flag so `python run.py --mock` keeps working without the mic or network.
 - **New dependencies** (`faster-whisper`, HTTP client, SpacetimeDB client) are added to `requirements.txt` when `bridge/` is implemented. The TypeScript projects keep their own `package.json`.
@@ -301,14 +300,12 @@ Tapping ✅ (`ap:<proposal id>`) hits the `telegram` trigger: `approve_proposal`
 .venv/Scripts/python run.py --mock --voice      # or --camera 1 --voice with the glasses
 ```
 
-- **"Hey glasses, ..."** is how a Jira command starts. The microphone is always on; each utterance is transcribed locally with Whisper `tiny.en` (~0.4 s) and dropped unless it has the phrase, so nothing leaves the laptop until you say it. On the phrase it beeps and:
-  - *"Hey glasses, move the open bugs to sprint 13"*: the rest of the sentence (transcribed again with `small.en`) is the request.
-  - *"Hey glasses"* alone: after the beep it records the request.
-  - *"Hey glasses, approve"*: approves the pending plan.
-- **Long blink** = the eye closed for 3 s (`CANCEL_AT`, the eye module's `CANCELLED` event; in `--mock`, hold F8 for 3 s). With a pending plan it approves it (`{"type": "approve", "proposal_id"}` to `glasses`, via `glasses`, and the plan's Telegram message is edited to "Approved from the glasses"); with no plan it starts listening for a request.
-- **F10** = talk: listens right away, without the phrase (fallback for a noisy room).
-- The overlay gets a second line: `Say "Hey glasses, ..."`, `Plan ready: "Hey glasses, approve" or blink` while `live_state.py` sees a pending plan (it polls SpacetimeDB every 2 s), and "Listening…", "Approved ✓ executing"… while it works.
-- Resting the eyes for 3 s also counts as a long blink, so `--voice` is opt-in. Whisper loads in the background; blink approvals work before it's ready.
+- **"Hey glasses, ..."** is how a Jira command starts. It uses dictation's lavalier mic and Whisper (`DICTATION_DEVICE`, `DICTATION_MODEL` in `config.py`): with `--voice` the mic is always open, even outside text boxes, and every transcript goes to the bridge first. What doesn't start with the phrase is dictation as usual (typed / preview in a text box, dropped anywhere else), so nothing leaves the laptop until you say it. On the phrase it beeps and:
+  - *"Hey glasses, move the open bugs to sprint 13"*: the rest of the sentence is the request. It's never typed, even in a text box.
+  - *"Hey glasses"* alone: after the beep, the next thing you say (within 8 s) is the request.
+  - *"Hey glasses, approve"*: approves the pending plan (`{"type": "approve", "proposal_id"}` to `glasses`, and the plan's Telegram message is edited to "Approved from the glasses").
+- **No blink gestures for voice:** since the merge with main the 3 s blink is drag and F10 is drag. Approve by voice, from the dashboard or from Telegram. F11 (manual dictation) + "Hey glasses, ..." also works.
+- The overlay gets a second line under the state: `Say "Hey glasses, ..."`, `Plan ready: "Hey glasses, approve"` while `live_state.py` sees a pending plan (it polls SpacetimeDB every 2 s), and "Sending…", "Approved ✓ executing"… while it works.
 
 Without EyeClick: `.venv/Scripts/python -m eyeclick.bridge --wake` runs the same wake loop in the terminal (`--no-send` only prints what it would send).
 
@@ -382,10 +379,10 @@ Files: `eyeclick/bus.py`, `eyeclick/app.py`, `run.py`, `eyeclick/sources/mock.py
 
 ## Agent team tasks (owner TBD)
 
-- [x] `eyeclick/bridge/listener.py`: long blink approves the pending plan or listens for a request (`--voice`, not yet tried with the glasses)
+- [x] `eyeclick/bridge/listener.py` + `Bridge.heard()`: "Hey glasses, ..." from dictation's mic → request or approval (`--voice`)
 - [x] `eyeclick/bridge/stt.py`: record until silence and transcribe with faster-whisper (Enter test: `python -m eyeclick.bridge`)
 - [x] `eyeclick/bridge/forge_client.py`: POST the request to the `glasses` web trigger (approvals: pending)
-- [x] `eyeclick/bridge/live_state.py`: poll SpacetimeDB every 2 s, overlay shows "Plan ready: say approve or blink"
+- [x] `eyeclick/bridge/live_state.py`: poll SpacetimeDB every 2 s, overlay shows `Plan ready: "Hey glasses, approve"`
 - [x] `forge-app/`: app created from `jira-issue-panel-ui-kit`, deployed and installed on the demo site
 - [ ] `forge-app/`: triggers (`glasses`, `telegram`), queue consumer, router, agents, actions, `lib/` (then uncomment their modules in `manifest.yml`)
 - [ ] `stdb/`: SpacetimeDB module with the request/job state

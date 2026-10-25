@@ -1,23 +1,13 @@
-""""Hey glasses" or a long blink -> a Jira request or an approval.  (bridge, bus subscriber)
+""""Hey glasses, ..." -> a Jira request or an approval.  (bridge)
 
-It's one more subscriber: app.py registers it with bus.subscribe(listener, TYPES) when it
-runs with --voice. handle() runs on the main thread, so it only starts a worker thread;
-recording, transcribing (stt.py) and sending (forge_client.py) happen there.
-
-The long blink is the eye module's CANCELLED event fired while the eye has been closed for
-CANCEL_AT (3 s): the point where a click is no longer possible. events.py has no event of
-its own for it, so the contract between SWE 1 and SWE 2 stays as it is. Resting the eyes for
-3 s counts as a long blink too, so --voice is opt-in.
-
-trigger() (long blink; in --mock, hold F8 for 3 s):
-    pending plan (live_state.py)  -> send_approval(plan id)
-    no plan                       -> record -> transcribe -> handle_text()
-talk() (F10, the voice fallback): always records, so "approve" can be said instead of blinking.
-run_wake_loop() (its own thread, the main way in): the mic is always on and an utterance
-    that starts with "Hey glasses" (wake.py) beeps and is handled: the words after the
-    phrase are the command, or, if there are none, it records the command next.
-Only one of these runs at a time (the busy lock); the wake loop lets go of the microphone
-while a blink or F10 recording is on.
+Two ways in, both "Hey glasses" (wake.py) and then the command:
+    send_async(command)  inside EyeClick (--voice): dictation's always-on mic transcribes,
+                         Bridge.heard() (__init__.py) spots the phrase and hands the command here
+    run_wake_loop()      standalone (python -m eyeclick.bridge --wake): this listener's own
+                         microphone (stt.Microphone, MIC_DEVICE); the words after the phrase are
+                         the command, or, if there are none, it records the command next
+Only one send runs at a time (the busy lock). Approving is by voice only: since main's merge
+the 3 s blink is drag (config.DRAG_AT), so there's no blink trigger anymore.
 
 handle_text(): a transcript like "approve" / "approve it" / "yes, approve" with a pending
 plan becomes an approval of that exact plan; anything else is a request, and forge-app
@@ -30,16 +20,10 @@ import logging
 import re
 import threading
 
-from eyeclick.config import CANCEL_AT
-from eyeclick.events import EventType as E
-
 from . import wake
 from .forge_client import ForgeError
 
 log = logging.getLogger(__name__)
-
-TYPES = {E.CANCELLED}
-LONG_BLINK_S = CANCEL_AT
 
 APPROVAL = re.compile(r"^\W*(yes\W+)?(approve|approved|approve it|approve that|approve the plan|i approve)\W*$", re.I)
 
@@ -77,10 +61,10 @@ def describe(answer):
 
 
 class VoiceListener:
-    def __init__(self, client, live_state, transcriber, microphone=None, on_status=lambda text: None):
+    def __init__(self, client, live_state, transcriber=None, microphone=None, on_status=lambda text: None):
         """client: forge_client.ForgeClient. live_state: live_state.LiveState (its .pending).
-        transcriber: stt.Transcriber. microphone: stt.Microphone, or None until load() opens it.
-        on_status: called from ANOTHER thread."""
+        transcriber, microphone: stt.Transcriber / stt.Microphone, only for run_wake_loop()
+        (inside EyeClick dictation already has the text). on_status: called from ANOTHER thread."""
         self.client = client
         self.live_state = live_state
         self.transcriber = transcriber
@@ -88,27 +72,23 @@ class VoiceListener:
         self.on_status = on_status
         self._busy = threading.Lock()
 
-    def handle(self, ev):
-        if ev.type == E.CANCELLED and ev.duration >= LONG_BLINK_S:
-            self.trigger()
-
-    def trigger(self):
-        """Long blink: approve the pending plan, or listen for a request. Any thread."""
-        self._start(approve_first=True)
-
-    def talk(self):
-        """Voice fallback (F10): always listen; saying "approve" approves the pending plan."""
-        self._start(approve_first=False)
-
     @property
     def busy(self):
         return self._busy.locked()
 
-    def _start(self, approve_first):
+    def send_async(self, command):
+        """Sends `command` on a worker thread. False (and nothing sent) if the last one is still going."""
         if not self._busy.acquire(blocking=False):
             log.info("still busy with the last one, ignored")
-            return
-        threading.Thread(target=self._run, args=(approve_first,), name="voice", daemon=True).start()
+            return False
+        threading.Thread(target=self._run_send, args=(command,), name="voice", daemon=True).start()
+        return True
+
+    def _run_send(self, command):
+        try:
+            self._guarded(self._send, command)
+        finally:
+            self._busy.release()
 
     def run_wake_loop(self, stop, wake_transcriber, on_wake=lambda: None, on_heard=lambda text: None):
         """Always-on listening for "Hey glasses" until `stop` (threading.Event) is set.
@@ -142,17 +122,6 @@ class VoiceListener:
                     self._guarded(self._listen_and_send)
             finally:
                 self._busy.release()
-
-    def _run(self, approve_first):
-        try:
-            plan = self.live_state.pending
-            if approve_first and plan:
-                self.on_status("Approving…")
-                self._guarded(lambda: self.on_status(describe(self.client.send_approval(plan["id"]))))
-            else:
-                self._guarded(self._listen_and_send)
-        finally:
-            self._busy.release()
 
     def _listen_and_send(self):
         if self.microphone is None:

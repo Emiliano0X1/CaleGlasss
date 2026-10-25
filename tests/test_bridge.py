@@ -1,17 +1,16 @@
-"""Bridge tests: long blink / voice -> approval or request, and the live plan state.  (bridge)
+"""Bridge tests: "Hey glasses" -> approval or request, and the live plan state.  (bridge)
 
 No network, microphone or Whisper: the client, transcriber and microphone are fakes.
+Bridge.heard() is what dictation calls with each transcript inside EyeClick; run_wake_loop()
+is the standalone test (python -m eyeclick.bridge --wake) with its own microphone.
 """
 import threading
 
 import pytest
 
-from eyeclick.bridge import listener, live_state
+from eyeclick.bridge import ARM_S, Bridge, live_state
 from eyeclick.bridge.listener import VoiceListener, handle_text, is_approval
 from eyeclick.bridge.live_state import LiveState
-from eyeclick.config import CANCEL_AT
-from eyeclick.events import EventType as E
-from eyeclick.events import EyeEvent
 
 PLAN = {"id": "p-w-1", "summary": "Move 8 issues to Sprint 13"}
 
@@ -53,12 +52,6 @@ class FakeMic:
         pass
 
 
-def make(pending=None, heard="move the open bugs to sprint 13"):
-    client, statuses = FakeClient(), []
-    voice = VoiceListener(client, FakeState(pending), FakeTranscriber(heard), FakeMic(), on_status=statuses.append)
-    return voice, client, statuses
-
-
 def wait(client):
     assert client.done.wait(2), "the worker thread didn't send anything"
 
@@ -73,41 +66,83 @@ def test_not_approval_words(text):
     assert not is_approval(text)
 
 
-def test_long_blink_with_a_plan_approves_it():
-    voice, client, statuses = make(pending=PLAN)
-    voice.handle(EyeEvent(E.CANCELLED, duration=CANCEL_AT))
-    wait(client)
-    assert client.sent == [("approve", "p-w-1")]
-
-
-def test_long_blink_without_a_plan_listens_and_sends_a_request():
-    voice, client, statuses = make(pending=None)
-    voice.handle(EyeEvent(E.CANCELLED, duration=CANCEL_AT + 0.1))
-    wait(client)
-    assert client.sent == [("request", "move the open bugs to sprint 13")]
-    assert "Listening…" in statuses
-
-
-def test_short_cancel_is_not_a_long_blink():
-    voice, client, _ = make(pending=PLAN)
-    voice.handle(EyeEvent(E.CANCELLED, duration=0.3))   # a natural blink
-    assert not client.done.wait(0.2)
-
-
-def test_saying_approve_approves_the_pending_plan():
-    voice, client, _ = make(pending=PLAN, heard="Approve.")
-    voice.talk()
-    wait(client)
-    assert client.sent == [("approve", "p-w-1")]
-
-
 def test_saying_approve_without_a_plan_goes_as_a_request():
     # forge-app then answers "nothing to approve"
     assert handle_text(FakeClient(), "approve", None) == {"intent": "request", "instruction": "approve"}
 
 
-def test_listener_only_wants_cancelled():
-    assert listener.TYPES == {E.CANCELLED}
+# --- Bridge.heard(): dictation's voice_hook inside EyeClick ---
+
+class Clock:
+    def __init__(self):
+        self.now = 100.0
+
+    def __call__(self):
+        return self.now
+
+
+def bridge(pending=None):
+    client, beeps, clock = FakeClient(), [], Clock()
+    b = Bridge(beep=lambda *tone: beeps.append(tone), client=client, live_state=FakeState(pending), clock=clock)
+    return b, client, beeps, clock
+
+
+def test_heard_wake_with_command_sends_it_and_is_not_typed():
+    b, client, beeps, _ = bridge()
+    assert b.heard("Hey glasses, move the open bugs to sprint 13.") == "Sending to Jira…"
+    wait(client)
+    assert client.sent == [("request", "move the open bugs to sprint 13")]
+    assert len(beeps) == 1
+
+
+def test_heard_approve_approves_the_pending_plan():
+    b, client, _, _ = bridge(pending=PLAN)
+    assert b.heard("Hey glasses, approve.") == "Sending to Jira…"
+    wait(client)
+    assert client.sent == [("approve", "p-w-1")]
+
+
+def test_heard_without_the_phrase_is_left_to_dictation():
+    b, client, beeps, _ = bridge(pending=PLAN)
+    assert b.heard("hello world") is None
+    assert b.heard("approve") is None       # a plain "approve" is dictation, not an approval
+    assert not client.done.wait(0.2) and beeps == []
+
+
+def test_heard_wake_alone_then_the_next_utterance_is_the_command():
+    b, client, beeps, clock = bridge()
+    assert b.heard("Hey glasses.") == "Hey glasses ✓"
+    assert b.note() == "Listening… say the command"
+    clock.now += ARM_S - 1
+    assert b.heard("Assign the open bugs to Ana.") == "Sending to Jira…"
+    wait(client)
+    assert client.sent == [("request", "Assign the open bugs to Ana.")]
+    assert len(beeps) == 2
+    assert b.heard("and this is dictation again") is None     # armed only once
+
+
+def test_heard_wake_alone_expires():
+    b, client, _, clock = bridge()
+    b.heard("Hey glasses")
+    clock.now += ARM_S + 0.1
+    assert b.heard("move the bugs") is None
+    assert b.note() != "Listening… say the command"
+    assert not client.done.wait(0.2)
+
+
+def test_heard_while_still_sending_is_not_typed_either():
+    b, client, _, _ = bridge()
+    b.listener._busy.acquire()               # the last send is still going
+    assert b.heard("Hey glasses, move the bugs") == "Still sending the last one…"
+    b.listener._busy.release()
+    assert client.sent == []
+
+
+def test_note_shows_the_pending_plan():
+    b, _, _, _ = bridge(pending=PLAN)
+    assert b.note() == 'Plan ready: "Hey glasses, approve"'
+    b, _, _, _ = bridge()
+    assert b.note() == 'Say "Hey glasses, ..."'
 
 
 def test_live_state_reports_only_changes():

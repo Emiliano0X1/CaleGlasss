@@ -151,13 +151,14 @@ class Focus:
         pass
 
 
-def auto(blocks, text="hello there", preview_s=10, editable=True):
+def auto(blocks, text="hello there", preview_s=10, editable=True, voice_hook=None, press_key=None):
     states, typed = [], []
     focus = Focus()
     focus.editable = editable
     dic = d.Dictation(on_state=lambda s, n=None: states.append((s, n)), transcriber=lambda a: text,
                       open_mic=FakeMic(blocks), type_text=typed.append, preview_s=preview_s,
-                      end=lambda noise=None: d.SpeechEnd(silence_s=0.5, wait_s=2, max_s=10, noise=noise))
+                      end=lambda noise=None: d.SpeechEnd(silence_s=0.5, wait_s=2, max_s=10, noise=noise),
+                      voice_hook=voice_hook, press_key=press_key or (lambda key: None))
     dic.start_auto(focus)
     return dic, states, typed
 
@@ -255,4 +256,68 @@ def test_comando_en_automatico_no_pasa_por_preview():
     dic.start_auto(Focus())
     assert wait_for(lambda: keys == ["enter"])
     assert dic.state == "idle" and dic.pending is None and typed == []
+    dic.close()
+
+
+# --- voice_hook: "Hey glasses, ..." va a Jira (eyeclick/bridge, Bridge.heard) ---
+
+def jira_hook(seen):
+    """Como Bridge.heard: toma lo que empieza con "Hey glasses" y deja pasar lo demás."""
+    def hook(text):
+        seen.append(text)
+        return "Sending to Jira…" if text.lower().startswith("hey glasses") else None
+    return hook
+
+
+def test_hook_se_lleva_el_texto_y_no_se_escribe():
+    seen, typed, states = [], [], []
+    blocks = [block(0.001)] * 3 + [block(0.2)] * 5 + [block(0.001)] * 10
+    dic = d.Dictation(on_state=lambda s, n=None: states.append((s, n)), transcriber=lambda a: "Hey glasses, move the bugs",
+                      open_mic=FakeMic(blocks), type_text=typed.append, voice_hook=jira_hook(seen),
+                      end=lambda: d.SpeechEnd(silence_s=0.5, wait_s=2, max_s=10))
+    dic.toggle()                                # F11 / botón mic también sirve para "Hey glasses"
+    finish(dic)
+    assert seen == ["Hey glasses, move the bugs"] and typed == []
+    assert states[-1] == ("idle", "Sending to Jira…") and dic.pending is None
+
+
+def test_hook_que_no_lo_quiere_deja_dictar_como_siempre():
+    seen = []
+    dic, states, typed = auto(SPEECH, voice_hook=jira_hook(seen))
+    assert wait_for(lambda: dic.state == "preview")
+    assert seen == ["hello there"] and dic.pending == "hello there"
+    dic.close()
+
+
+def test_con_hook_escucha_fuera_de_un_cuadro_de_texto():
+    seen = []
+    dic, states, typed = auto(SPEECH, text="Hey glasses, write the report", editable=False, voice_hook=jira_hook(seen))
+    assert wait_for(lambda: states and states[-1] == ("idle", "Sending to Jira…"))
+    assert seen == ["Hey glasses, write the report"] and typed == [] and dic.pending is None
+    dic.close()
+
+
+def test_fuera_de_un_cuadro_de_texto_lo_que_no_es_del_hook_se_descarta_callado():
+    seen, keys = [], []
+    dic, states, typed = auto(SPEECH, text="Enter", editable=False, voice_hook=jira_hook(seen),
+                              press_key=keys.append)
+    assert wait_for(lambda: seen)
+    assert wait_for(lambda: dic.state == "idle" and states[-1] == ("idle", None))
+    assert typed == [] and keys == [] and dic.pending is None    # ni preview ni Enter
+    dic.close()
+
+
+def test_hey_glasses_enter_va_al_hook_y_no_aprieta_enter():
+    keys = []
+    dic, states, typed = auto(SPEECH, text="Hey glasses, enter", voice_hook=jira_hook([]), press_key=keys.append)
+    assert wait_for(lambda: states and states[-1] == ("idle", "Sending to Jira…"))
+    assert keys == [] and typed == []
+    dic.close()
+
+
+def test_hook_que_falla_no_rompe_el_dictado():
+    def broken(text):
+        raise RuntimeError("bridge down")
+    dic, states, typed = auto(SPEECH, voice_hook=broken)
+    assert wait_for(lambda: dic.state == "preview")
     dic.close()

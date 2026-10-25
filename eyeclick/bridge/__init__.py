@@ -1,17 +1,24 @@
 """glasses-bridge: voice + agents, in the same process as EyeClick.
 
     wake.py          -> the wake phrase "Hey glasses" that turns on the Jira command
-    listener.py      -> wake loop + bus subscriber; long blink approves the pending plan or listens
-    stt.py           -> microphone + audio -> text with faster-whisper (local)
+    listener.py      -> sends the command (request or approval); its own wake loop for the standalone test
+    stt.py           -> microphone + Whisper, only for the standalone test (python -m eyeclick.bridge)
     forge_client.py  -> POSTs the text or the approval to forge-app's `glasses` web trigger
     live_state.py    -> polls SpacetimeDB for the newest pending plan
-    Bridge (here)    -> builds them for app.py and says what the overlay should show
+    Bridge (here)    -> what app.py uses with --voice, and what the overlay should show
 
-None of this blocks the main thread: recording, transcribing, sending and reading
-SpacetimeDB run on their own threads (see README, "Agent team").
+Inside EyeClick there's one microphone and one Whisper: dictation's (actions/dictation.py,
+always on with DICTATION_AUTO). It hands every transcript to Bridge.heard() first:
+    "Hey glasses, <command>"  -> beep, the command goes to Jira; nothing is typed
+    "Hey glasses" alone       -> beep, the next utterance (within ARM_S) is the command
+    anything else             -> None: dictation types it / shows its preview as usual
+Approving is by voice ("Hey glasses, approve"), from the panel or from Telegram: since main's
+merge the 3 s blink is drag.
+
+None of this blocks the main thread: sending and reading SpacetimeDB run on their own
+threads (see README, "Agent team").
 """
 import logging
-import os
 import threading
 import time
 
@@ -23,70 +30,74 @@ for noisy in ("httpx", "httpcore", "httpx2", "httpcore2", "faster_whisper"):
     logging.getLogger(noisy).setLevel(logging.WARNING)
 
 STATUS_S = 4.0          # how long a finished status ("Approved ✓") stays before the plan note returns
-PLAN_NOTE = 'Plan ready: "Hey glasses, approve" or blink'
+ARM_S = 8.0             # after "Hey glasses" alone, the next utterance within this is the command
+PLAN_NOTE = 'Plan ready: "Hey glasses, approve"'
 IDLE_NOTE = 'Say "Hey glasses, ..."'
-WORKING = ("Approving…", "Listening…", "Transcribing…", "Sending", "Voice is loading…")
+WORKING = ("Approving…", "Listening…", "Transcribing…", "Sending")
 WAKE_BEEP = (1500, 120)     # Hz, ms: "I heard you"
 
 
 class Bridge:
-    """Everything app.py needs for --voice: subscribe `listener`, call start(), talk() on F10,
-    read note() from the main thread each tick, stop() on exit.
-    beep(freq, ms): feedback.Feedback.beep, so the wake phrase is answered with a sound."""
+    """Everything app.py needs for --voice: pass heard() to Dictation as its voice_hook, call
+    start(), read note() from the main thread each tick, stop() on exit.
+    beep(freq, ms): feedback.Feedback.beep, so the wake phrase is answered with a sound.
+    client / live_state: fakes in the tests (default: ForgeClient() and LiveState())."""
 
-    def __init__(self, model_size=None, beep=None):
-        from . import stt
-        from .forge_client import ForgeClient
+    def __init__(self, beep=None, client=None, live_state=None, clock=time.monotonic):
         from .listener import VoiceListener
-        from .live_state import LiveState
-        from . import wake
 
-        self._stt = stt
-        self.model_size = model_size or stt.MODEL_SIZE
-        self.live_state = LiveState()
-        self.listener = VoiceListener(ForgeClient(), self.live_state, stt.Transcriber(self.model_size),
-                                      on_status=self._set_status)
-        self.wake_transcriber = stt.Transcriber(wake.WAKE_MODEL, prompt=None)   # a prompt with the phrase could make Whisper "hear" it in noise
+        if client is None:
+            from .forge_client import ForgeClient
+            client = ForgeClient()      # fails now if eyeclick/bridge/.env is missing, not after talking
+        if live_state is None:
+            from .live_state import LiveState
+            live_state = LiveState()
+        self.live_state = live_state
+        self.listener = VoiceListener(client, live_state, on_status=self._set_status)
         self._beep = beep
-        self._stop = threading.Event()
+        self._clock = clock
+        self._armed_until = 0.0
         self._status = ("", 0.0)
         self._lock = threading.Lock()
 
     def start(self):
         self.live_state.start()
-        self._set_status("Voice is loading…")
-        threading.Thread(target=self._load, name="voice-load", daemon=True).start()
-
-    def talk(self):
-        self.listener.talk()
 
     def stop(self):
-        self._stop.set()
         self.live_state.stop()
-        self.listener.close()
+
+    def heard(self, text):
+        """Dictation's voice_hook, on its thread: a note if the text was for Jira (so it isn't
+        typed), None if it wasn't."""
+        from . import wake
+
+        command = wake.command_after(text)
+        if command is None:
+            if self._clock() >= self._armed_until:
+                return None
+            command = text.strip()          # the command after a bare "Hey glasses"
+        self._armed_until = 0.0
+        if command:
+            if self.listener.busy:
+                return "Still sending the last one…"
+            self._on_wake()
+            self.listener.send_async(command)
+            return "Sending to Jira…"
+        self._on_wake()
+        self._armed_until = self._clock() + ARM_S
+        return "Hey glasses ✓"
 
     def note(self):
-        """Second line of the overlay: a voice status while it's fresh, else the pending plan, else ''."""
+        """Second line of the overlay: a voice status while it's fresh, else the pending plan, else the hint."""
+        if self._clock() < self._armed_until:
+            return "Listening… say the command"
         with self._lock:
             text, until = self._status
         if text and (time.monotonic() < until or text.startswith(WORKING)):
             return text
         if self.live_state.pending:
             return PLAN_NOTE
-        return IDLE_NOTE if self.listener.microphone is not None else ""
-
-    def _load(self):
-        """Whisper takes a few seconds to load: off the main thread, so EyeClick starts right away."""
-        try:
-            self.listener.transcriber.load()
-            self.wake_transcriber.load()
-            self.listener.microphone = self._stt.Microphone(self._stt.find_device(os.environ.get("MIC_DEVICE")))
-            self._set_status("Voice ready")
-        except Exception:
-            log.exception("voice couldn't start (blink approvals still work)")
-            self._set_status("No microphone")
-            return
-        self.listener.run_wake_loop(self._stop, self.wake_transcriber, on_wake=self._on_wake)
+        return IDLE_NOTE
 
     def _on_wake(self):
         if self._beep is not None:
