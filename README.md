@@ -142,37 +142,39 @@ CaleGlasss/
 │   ├── ui/                   #                                                       (SWE 2)
 │   │   ├── monitor.py        # window with the eye video, status and controls
 │   │   └── overlay.py        # small floating indicator
-│   └── bridge/               # glasses-bridge: voice + agents, same process as EyeClick  (stubs)
-│       ├── listener.py       # sends "Hey glasses" commands (requests / approvals); standalone wake loop
-│       ├── stt.py            # faster-whisper
+│   └── bridge/               # glasses-bridge: "Hey glasses" -> Forge, same process as EyeClick (--voice)  ✅
+│       ├── __init__.py       # Bridge: dictation's voice_hook (heard) + the overlay's second line (note)
+│       ├── wake.py           # spots "Hey glasses" in a transcript
+│       ├── listener.py       # sends commands (request / approve); standalone wake loop
+│       ├── stt.py            # mic + faster-whisper, only for the standalone test (python -m eyeclick.bridge)
 │       ├── forge_client.py   # POST to the Forge `glasses` web trigger (request or approve)
 │       └── live_state.py     # polls SpacetimeDB for the newest pending plan (overlay note)
-├── forge-app/                # Atlassian Forge app: issue panel deployed ✅, agents (stubs)
-│   ├── manifest.yml          # issue panel active; agent modules commented out
-│   ├── package.json          # from the jira-issue-panel-ui-kit template
+├── forge-app/                # Atlassian Forge app: triggers, queue, agents  ✅ (see System overview)
+│   ├── manifest.yml          # web triggers, agent-runs queue consumer, Jira + Confluence scopes
 │   ├── src/
 │   │   ├── index.ts          # exports every handler
-│   │   ├── frontend/index.jsx # issue panel UI (UI Kit)                                 ✅
-│   │   ├── resolvers/index.ts # issue panel resolver                                    ✅
+│   │   ├── frontend/index.jsx # issue panel UI (UI Kit)
+│   │   ├── resolvers/index.ts # issue panel resolver
 │   │   ├── triggers/
-│   │   │   ├── glasses.ts    # voice requests and approvals
-│   │   │   └── telegram.ts   # ✅ button and written requests
-│   │   ├── queue/consumer.ts # dispatches: router, agent, execute
+│   │   │   ├── glasses.ts    # voice requests and approvals (glasses and dashboard), CORS
+│   │   │   ├── telegram.ts   # ✅ button, "Already approved by NAME via VIA"
+│   │   │   └── debug.ts      # reads a sprint with JQL (debugging only)
+│   │   ├── queue/consumer.ts # dispatches: router, agent, execute; queues dependents when a plan is done
 │   │   ├── agents/
-│   │   │   ├── loop.ts       # Claude loop with tools
-│   │   │   ├── router.ts     # decides which agent and creates the jobs
-│   │   │   ├── jira_agent.ts # Jira agent prompt and tools
-│   │   │   └── reporter.ts   # reporter prompt and tools
-│   │   ├── execute/actions.ts # one function per plan action type
-│   │   └── lib/
-│   │       ├── claude.ts     # Claude client + model (claude-opus-5-5)
-│   │       ├── stdb.ts       # writes the live state to SpacetimeDB
-│   │       ├── jira.ts
-│   │       ├── confluence.ts
-│   │       └── telegram.ts
+│   │   │   ├── interpret.ts  # cleans up the voice transcript (Haiku)
+│   │   │   ├── router.ts     # splits a request into jira / reporter work items (Haiku)
+│   │   │   ├── loop.ts       # Claude tool loop shared by the agents (Sonnet)
+│   │   │   ├── jira_agent.ts # reads Jira, proposes changes
+│   │   │   ├── reporter.ts   # reads Jira + Confluence, proposes a report page
+│   │   │   └── memory.ts     # team notes in every prompt + save_note tool
+│   │   ├── execute/
+│   │   │   ├── approve.ts    # approve / reject, shared by Telegram and voice
+│   │   │   └── actions.ts    # the only place that writes to Jira and Confluence
+│   │   └── lib/              # claude.ts, stdb.ts, jira.ts, confluence.ts, telegram.ts, webtrigger.ts
 │   └── static/panel/         # Custom UI (extra)
-├── stdb/                     # SpacetimeDB module (TypeScript), see stdb/README.md    (to do)
-├── dashboard/                # web panel (Vite + SpacetimeDB SDK), see its README    (to do)
+├── stdb/                     # SpacetimeDB module `agentes` on Maincloud, see stdb/README.md  ✅
+├── dashboard_agents/         # live web panel (Vite + React + SpacetimeDB SDK), see its README  ✅
+├── scripts/                  # seed.py (demo Jira data), demo_reset.py, test_reset.py (back to the start)
 └── tests/
     ├── test_blink_fsm.py     # ✅ passes
     ├── test_vision.py        # ✅ passes (synthetic eye images, no camera needed)
@@ -182,7 +184,7 @@ CaleGlasss/
     └── conftest.py           # one shared Tk for the UI tests
 ```
 
-Names are in English: the plan's `lentes.ts` is `glasses.ts` and `reportero.ts` is `reporter.ts`. `glasses-bridge` from the agent-team plan lives in `eyeclick/bridge/` instead of a top-level `glasses-bridge/` folder: it has to run in the same process as EyeClick (to listen to the bus and update the overlay), and Python can't import a package whose name has a hyphen. The TypeScript projects (`forge-app/`, `stdb/`, `dashboard/`) are separate and sit at the root.
+Names are in English: the plan's `lentes.ts` is `glasses.ts` and `reportero.ts` is `reporter.ts`. `glasses-bridge` from the agent-team plan lives in `eyeclick/bridge/` instead of a top-level `glasses-bridge/` folder: it has to run in the same process as EyeClick (to listen to the bus and update the overlay), and Python can't import a package whose name has a hyphen. The TypeScript projects (`forge-app/`, `stdb/`, `dashboard_agents/`) are separate and sit at the root.
 
 ✅ = already implemented. (stubs) = files created with their interface and a `TODO` list in the header comment, not implemented yet. To see every pending item:
 
@@ -211,34 +213,182 @@ Right click: `EYE_CLOSED → STAGE_LEFT → STAGE_RIGHT → CLICK_RIGHT`. Drag: 
 
 **Nobody changes `events.py` or `config.py` without telling the other person first.**
 
+## System overview: how everything connects
+
+Four places run code: the **glasses** (hardware), the **laptop** (EyeClick, one Python process), **Atlassian Forge** (the agents, in the cloud) and **SpacetimeDB Maincloud** (the shared live state, in the cloud). Claude, Jira, Confluence and Telegram are services the agents call. The dashboard is a web page that only watches SpacetimeDB and has an Approve button.
+
+```mermaid
+flowchart LR
+    subgraph glasses["Glasses (hardware)"]
+        cam["Endoscopic camera<br/>(one eye)"]
+        esp["Calestick ESP32-S3<br/>+ MPU-6050 gyro"]
+        mic["Lavalier mic"]
+    end
+
+    subgraph laptop["Laptop: EyeClick (one Python process)"]
+        vision["vision/pipeline.py<br/>eye model + blink_fsm"]
+        bus["bus.py"]
+        mouse["actions/mouse.py<br/>click / drag"]
+        overlay["ui/overlay.py + monitor.py"]
+        dict["actions/dictation.py<br/>Whisper, local"]
+        bridge["bridge/<br/>Bridge.heard + forge_client"]
+        live["bridge/live_state.py"]
+    end
+
+    os["Windows cursor<br/>+ focused app"]
+
+    subgraph forge["Atlassian Forge (cloud)"]
+        tg_glasses["triggers/glasses.ts<br/>(web trigger)"]
+        tg_telegram["triggers/telegram.ts<br/>(web trigger)"]
+        queue[["agent-runs queue"]]
+        consumer["queue/consumer.ts"]
+        router["agents/router.ts"]
+        agents["jira_agent.ts / reporter.ts<br/>(agents/loop.ts)"]
+        exec["execute/actions.ts"]
+    end
+
+    subgraph services["Services"]
+        claude["Claude API<br/>Haiku: interpret, route<br/>Sonnet: agents"]
+        jira["Jira<br/>project PROJ"]
+        conf["Confluence<br/>space Team"]
+        telegram["Telegram<br/>@caleglass_bot"]
+    end
+
+    stdb[("SpacetimeDB Maincloud<br/>database agentes")]
+    panel["dashboard_agents/<br/>(browser)"]
+
+    cam -- "USB video" --> vision
+    vision -- "events" --> bus
+    bus --> mouse
+    bus --> overlay
+    esp -- "BLE mouse: moves the cursor" --> os
+    mouse -- "clicks where the eye closed" --> os
+    mic -- "audio" --> dict
+    dict -- "typed text / Enter" --> os
+    dict -- "every transcript first" --> bridge
+    bridge -- "HTTPS POST + x-secret<br/>request / approve" --> tg_glasses
+    live -- "HTTP /sql every 2 s" --> stdb
+    live -- "pending plan" --> overlay
+
+    tg_glasses -- "clean up the transcript" --> claude
+    tg_glasses -- "create_work, log_event" --> stdb
+    tg_glasses -- "router / execute" --> queue
+    tg_glasses -- "receipt" --> telegram
+    telegram -- "webhook: ✅ tap" --> tg_telegram
+    tg_telegram -- "approve_proposal" --> stdb
+    tg_telegram -- "execute" --> queue
+    queue --> consumer
+    consumer --> router
+    router -- "split into work items" --> claude
+    router -- "create_work + depends_on" --> stdb
+    consumer --> agents
+    agents -- "tool loop" --> claude
+    agents -- "read" --> jira
+    agents -- "read" --> conf
+    agents -- "plan + ✅ button" --> telegram
+    agents -- "heartbeat, submit_proposal,<br/>memory_write" --> stdb
+    consumer --> exec
+    exec -- "write changes" --> jira
+    exec -- "publish page" --> conf
+    exec -- "record_action, complete_proposal" --> stdb
+    exec -- "✅ Done + links" --> telegram
+
+    stdb -- "WebSocket subscription" --> panel
+    panel -- "Approve: HTTPS POST + x-secret,<br/>via panel" --> tg_glasses
+```
+
+### One request, end to end
+
+*"Hey glasses, move what's left to sprint 13 and write the report"*:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor W as Wearer
+    participant L as Laptop<br/>(dictation + bridge)
+    participant G as Forge<br/>glasses.ts
+    participant Q as Forge queue<br/>+ consumer
+    participant C as Claude
+    participant S as SpacetimeDB
+    participant T as Telegram
+    participant A as Jira / Confluence
+    participant P as Dashboard
+
+    W->>L: "Hey glasses, move ... and write the report"
+    L->>L: Whisper (local), wake phrase found: not typed, beep
+    L->>G: POST {type: request, text, person, request_id}
+    G->>C: interpret (Haiku): clean instruction
+    G->>S: create_work(w-r1), log_event
+    G->>T: 📥 Got your request
+    G->>Q: {type: router}
+    S-->>P: new work item (live)
+    Q->>C: route (Haiku): [jira, reporter depends_on jira]
+    Q->>S: create_work(w-r1-1 jira), create_work(w-r1-2 reporter)
+    Q->>Q: {type: agent} for each
+    Note over Q,S: reporter can't claim w-r1-2 yet:<br/>heartbeat "waiting for the jira agent"
+    Q->>S: claim_work(w-r1-1, jira)
+    loop Jira agent turns
+        Q->>S: heartbeat "turn n/15"
+        Q->>C: Sonnet + tools
+        Q->>A: read Jira (search, sprints, transitions)
+    end
+    Q->>S: submit_proposal (pending)
+    Q->>T: 📝 Plan + ✅ Approve
+    S-->>P: plan in "Pending plans"
+    W->>T: taps ✅ (or "Hey glasses, approve", or the panel's Approve)
+    T->>G: webhook (telegram.ts)
+    G->>S: approve_proposal (only the first approval wins)
+    G->>Q: {type: execute}
+    Q->>S: start_execution
+    Q->>A: move issues to sprint 13
+    Q->>S: record_action per change, complete_proposal
+    Q->>T: ✅ Done + /browse links
+    S-->>P: plan moves to the Log
+    Q->>Q: {type: agent} for w-r1-2 (its dependency is done)
+    Q->>C: reporter: Sonnet + tools (reads Jira + Confluence)
+    Q->>T: 📝 Report plan + ✅ Approve
+    W->>T: ✅
+    Q->>A: publish the page under "Sprint reports"
+    Q->>T: ✅ Done + page link
+```
+
+### Connections
+
+| From → To | How | Auth | What goes through |
+|---|---|---|---|
+| Camera → EyeClick | USB video (OpenCV) | none | eye frames |
+| ESP32 → Windows | Bluetooth LE HID mouse | BLE pairing | cursor movement only (clicks come from EyeClick) |
+| Lavalier → EyeClick | sounddevice, 16 kHz | none | audio for dictation and "Hey glasses" |
+| EyeClick → Windows | pynput | OS permissions | clicks, drag, typed text, Enter |
+| Bridge → Forge `glasses` | HTTPS POST | `x-secret` = `APPROVAL_SECRET` | `request` (text) or `approve` (proposal id) |
+| Dashboard → Forge `glasses` | HTTPS POST (CORS) | `x-secret` | `approve` with `via: "panel"` |
+| Telegram → Forge `telegram` | webhook POST | `X-Telegram-Bot-Api-Secret-Token` = `TELEGRAM_SECRET` | ✅ button taps (`ap:<proposal id>`) |
+| Forge → SpacetimeDB | HTTPS `/call/<reducer>`, `/sql` | Bearer `STDB_TOKEN` (writes) | every state change (reducers in `stdb/README.md`) |
+| Forge → Claude | HTTPS Messages API | `ANTHROPIC_API_KEY` | interpret, route (Haiku); agents (Sonnet, with tools) |
+| Forge → Jira / Confluence | `requestJira` / `requestConfluence` as the app | Forge scopes in `manifest.yml` | reads during planning; writes only after approval |
+| Forge → Telegram | Bot API HTTPS | `TELEGRAM_BOT_TOKEN` | receipt, plan with ✅, edits, ✅ Done |
+| Laptop `live_state` → SpacetimeDB | HTTPS `/sql` every 2 s | none (tables are public) | newest pending plan for the overlay |
+| Dashboard ← SpacetimeDB | WebSocket subscription (SDK) | anonymous identity | live rows of 5 tables, no polling |
+
+**Where things live.** Secrets for the cloud are encrypted Forge variables (`forge variables set --encrypt`). The laptop only needs `eyeclick/bridge/.env` (`GLASSES_WEBTRIGGER_URL`, `APPROVAL_SECRET`, `PERSON_ID`); the dashboard needs the same three in `dashboard_agents/.env.local`. All shared state is in SpacetimeDB: `work_items`, `proposals`, `agents`, `events`, `actions`, `people`, `plan_messages` and `memory` (the agents' notes). Nothing about the agents is stored on the laptop.
+
+**Safety rules the whole flow keeps:**
+- **Agents only read and propose.** Jira and Confluence change only in `execute/actions.ts`, after a person approves.
+- **One approval wins.** `approve_proposal` only accepts a `pending` plan, and `start_execution` only goes from `approved` to `executing`, so a double tap, a voice "approve" plus a panel click, or a queue retry runs the plan once.
+- **A retried request does nothing new.** Every request carries a `request_id`, and `create_work` ignores one it has already seen.
+- **A blocked work item waits; it doesn't loop.** If its `depends_on` isn't done, the agent says "waiting for …" and stops. The consumer queues it again when the dependency's plan is done.
+
 ## Agent team (voice → Forge → agents)
 
-```
-glasses laptop (Python, one process)                    cloud
-actions/dictation.py (lavalier mic + Whisper, local)
-  --"Hey glasses, ..."--> bridge Bridge.heard() -> listener.py
-                                   -> forge_client.py --POST--> forge-app triggers/glasses.ts
-                                                                  -> queue/consumer.ts
-                                                                     -> agents/router.ts -> jira_agent / reporter (agents/loop.ts + Claude)
-                                                                     -> execute/actions.ts -> Jira, Confluence, Telegram
-                                                                  -> lib/stdb.ts writes the state -> stdb/ (SpacetimeDB)
-ui/overlay.py <-- bridge/live_state.py <--------------------------------------------- reads stdb/
-                                                                  dashboard/ reads stdb/ too
-Telegram -> triggers/telegram.ts (✅ approve, written requests) -> same queue
-```
+The diagrams are in [System overview](#system-overview-how-everything-connects).
 
 How the bridge plugs into EyeClick, without changing what already works:
 
 - **One microphone, one Whisper: dictation's.** `actions/dictation.py` hands every transcript to `Bridge.heard()` first (its `voice_hook`). If it starts with "Hey glasses" it goes to Jira and isn't typed; anything else is dictation as usual. No blink starts or approves anything: the 3 s blink is drag.
 - **Nothing slow runs in the main thread.** Dictation transcribes on its own thread and `forge_client.py` sends on another; `heard()` only starts the send. Otherwise `bus.dispatch()` and the clicks freeze while Whisper transcribes.
-- **`live_state.py` never touches tkinter directly.** It reads SpacetimeDB in its own thread and hands each update to the main thread (the same way `app.py` already does with F9 pause requests). Then the main thread calls `overlay.show(...)`.
+- **`live_state.py` never touches tkinter directly.** It reads SpacetimeDB in its own thread; `app.py` copies `Bridge.note()` to the overlay's second line on each tick of the main thread.
 - **Approvals:** the wearer approves a plan by voice from the glasses ("Hey glasses, approve": `forge_client.py` → `glasses.ts`), from the dashboard's Approve button, or from Telegram (`telegram.ts`, ✅ button). All go into the same queue, and only the first one counts.
-
-Open decisions (agree on them before writing code):
-
-- **Owner** of `eyeclick/bridge/`, `forge-app/`, `stdb/` and `dashboard/`.
-- **How to start it:** for example, a `run.py` flag so `python run.py --mock` keeps working without the mic or network.
-- **New dependencies** (`faster-whisper`, HTTP client, SpacetimeDB client) are added to `requirements.txt` when `bridge/` is implemented. The TypeScript projects keep their own `package.json`.
+- **Opt-in:** without `--voice` nothing of the bridge is loaded, so `python run.py --mock` works without the network.
 
 ### Running the Forge app
 
@@ -290,7 +440,7 @@ curl -X POST "<URL>" -H "x-secret: <APPROVAL_SECRET>" -H "Content-Type: applicat
      -d '{"type":"request","text":"move the pending items","person":"me","request_id":"r2"}'
 ```
 
-After the receipt, `glasses` pushes `{ type: "agent", work_id, person }` to the **`agent-runs`** queue and answers (≈0.6 s warm; the first call after a deploy takes ~3 s while the function cold-starts). The queue consumer (`src/queue/consumer.ts`, function `consume-queue`) claims the work item and runs the Jira agent (`src/agents/jira_agent.ts`, Claude `claude-sonnet-5-5`): it reads Jira and sends the plan to Telegram as a numbered list with a **✅ Approve** button, without changing anything. In `forge logs` the trigger's lines come first, then `consumer: ...`. If the consumer never runs, check that `queue:` in `manifest.yml` matches `QUEUE_KEY` in `consumer.ts`.
+After the receipt, `glasses` pushes `{ type: "router", work_id, person }` to the **`agent-runs`** queue and answers (≈0.6 s warm; the first call after a deploy takes ~3 s while the function cold-starts). The queue consumer (`src/queue/consumer.ts`, function `consume-queue`) runs the router (`src/agents/router.ts`, Claude Haiku), which splits the request into work items (`jira` / `reporter`, with `depends_on`) and queues `{ type: "agent" }` for each. Each agent (`jira_agent.ts` or `reporter.ts`, Claude `claude-sonnet-5-5`, with the team notes from `memory` at the start of its prompt) reads Jira / Confluence and sends the plan to Telegram with a **✅ Approve** button, without changing anything. In `forge logs` the trigger's lines come first, then `consumer: ...`. If the consumer never runs, check that `queue:` in `manifest.yml` matches `QUEUE_KEY` in `consumer.ts`.
 
 Tapping ✅ (`ap:<proposal id>`) hits the `telegram` trigger: `approve_proposal` in stdb (a second tap answers "Already approved" and queues nothing), the message changes to "Approved, executing…", and `{ type: "execute", proposal_id }` goes to the same queue. The consumer then runs `start_execution`, applies each action in Jira (`src/execute/actions.ts`, one `record_action` row per change), `complete_proposal`, and sends `✅ Done` with each change and its `/browse/KEY` link. A 403 from Jira means a missing write scope (`write:jira-work`, `write:sprint:jira-software`); a 400, a wrong request body.
 
@@ -381,12 +531,13 @@ Files: `eyeclick/bus.py`, `eyeclick/app.py`, `run.py`, `eyeclick/sources/mock.py
 
 - [x] `eyeclick/bridge/listener.py` + `Bridge.heard()`: "Hey glasses, ..." from dictation's mic → request or approval (`--voice`)
 - [x] `eyeclick/bridge/stt.py`: record until silence and transcribe with faster-whisper (Enter test: `python -m eyeclick.bridge`)
-- [x] `eyeclick/bridge/forge_client.py`: POST the request to the `glasses` web trigger (approvals: pending)
+- [x] `eyeclick/bridge/forge_client.py`: POST the request or the approval to the `glasses` web trigger
 - [x] `eyeclick/bridge/live_state.py`: poll SpacetimeDB every 2 s, overlay shows `Plan ready: "Hey glasses, approve"`
-- [x] `forge-app/`: app created from `jira-issue-panel-ui-kit`, deployed and installed on the demo site
-- [ ] `forge-app/`: triggers (`glasses`, `telegram`), queue consumer, router, agents, actions, `lib/` (then uncomment their modules in `manifest.yml`)
-- [ ] `stdb/`: SpacetimeDB module with the request/job state
-- [ ] `dashboard/`: web panel that reads the same state
+- [x] `forge-app/`: app created from `jira-issue-panel-ui-kit`, deployed and installed on the demo site (Jira + Confluence)
+- [x] `forge-app/`: triggers (`glasses`, `telegram`), queue consumer, router, Jira and reporter agents, memory, actions, `lib/`
+- [x] `stdb/`: SpacetimeDB module `agentes` (work items, proposals, agents, events, actions, people, plan messages, memory)
+- [x] `dashboard_agents/`: live web panel (agents, work, pending plans with Approve, events, log)
+- [x] `scripts/test_reset.py`: Jira, Confluence and SpacetimeDB back to the start before a rehearsal
 - [ ] `forge-app/static/panel/`: Custom UI (extra)
 
 ## Schedule
