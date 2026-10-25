@@ -24,7 +24,7 @@ def test_contadores():
     counts = {"left": 0, "right": 0, "ignored": 0, "lost": 0}
     for ev in (EyeEvent(E.CLICK_LEFT), EyeEvent(E.CLICK_RIGHT), EyeEvent(E.CLICK_LEFT),
                EyeEvent(E.CANCELLED, duration=0.2),     # parpadeo natural
-               EyeEvent(E.CANCELLED, duration=3.1),     # descanso: no es parpadeo
+               EyeEvent(E.CANCELLED, duration=1.0),     # se perdió la imagen: no es parpadeo
                EyeEvent(E.EYE_LOST), EyeEvent(E.EYE_CLOSED)):
         m.count_event(counts, ev)
     assert counts == {"left": 2, "right": 1, "ignored": 1, "lost": 1}
@@ -32,21 +32,27 @@ def test_contadores():
 
 # --- estado grande ---
 @pytest.mark.parametrize("v, texto", [
-    (None, "ESPERANDO CÁMARA"),
-    (view("open"), "abierto"),
-    (view("lost"), "SIN OJO"),
-    (view("closed", 0.2), "cerrado"),
-    (view("closed", LEFT_AT + 0.1), "IZQUIERDO"),
-    (view("closed", RIGHT_AT + 0.1), "DERECHO"),
-    (view("closed", 3.5), "descanso"),
+    (None, "WAITING FOR CAMERA"),
+    (view("open"), "open"),
+    (view("lost"), "NO EYE"),
+    (view("closed", 0.2), "closed"),
+    (view("closed", LEFT_AT + 0.1), "LEFT"),
+    (view("closed", RIGHT_AT + 0.1), "RIGHT"),
+    (view("closed", 3.5), "DRAGGING: open eye to drop"),
 ])
 def test_estado(v, texto):
     assert m.status_of(v, now=100.1)[0] == texto
 
 
 def test_camara_congelada_y_flash():
-    assert m.status_of(view(t=100.0), now=100.0 + m.FROZEN_S + 0.1)[0] == "CÁMARA CONGELADA"
-    assert m.status_of(view(), now=100.1, flash="clic ✓") == ("clic ✓", m.GREEN)
+    assert m.status_of(view(t=100.0), now=100.0 + m.FROZEN_S + 0.1)[0] == "CAMERA FROZEN"
+    assert m.status_of(view(), now=100.1, flash="click ✓") == ("click ✓", m.GREEN)
+
+
+def test_estado_de_arrastre_con_el_ojo_abierto():
+    assert m.status_of(view("open"), now=100.1, drag="armed") == (m.DRAG_TEXT["armed"], m.YELLOW)
+    assert m.status_of(view("open"), now=100.1, drag="holding")[0] == m.DRAG_TEXT["holding"]
+    assert m.status_of(view("closed", LEFT_AT + 0.1), now=100.1, drag="holding")[0] == "LEFT"
 
 
 # --- imagen ---
@@ -127,23 +133,42 @@ def test_ventana(root):
     src, pauses = FakeSource(), []
     mon = m.Monitor(root, src, on_pause=lambda: pauses.append(1))
     mon._refresh()
-    assert mon.status.cget("text") == "abierto"
+    assert mon.status.cget("text") == "open"
     assert int(mon.thr.get()) == 50
 
     src.v = view("closed", RIGHT_AT + 0.1, t=time.monotonic())
     mon._refresh()
-    assert mon.status.cget("text") == "DERECHO"
+    assert mon.status.cget("text") == "RIGHT"
     mon.handle(EyeEvent(E.CLICK_RIGHT, duration=1.5))
     assert mon.count_labels["right"].cget("text") == "1"
 
     mon.pause_btn.invoke()
     assert pauses == [1]
     mon.set_paused(True)
-    assert mon.pause_lbl.winfo_manager() == "pack"
+    assert mon.stage.itemcget(mon.pause_lbl.item, "state") == "normal"
     mon.set_paused(False)
-    assert mon.pause_lbl.winfo_manager() == ""
+    assert mon.stage.itemcget(mon.pause_lbl.item, "state") == "hidden"
     assert str(mon.rec_btn.cget("state")) == "disabled"     # FakeSource no tiene cámara
 
+    mon._layout(2.0, 0, 0)                                  # ventana más grande: todo se escala
+    assert mon._photo_size == ((m.EYE_BOX[2] - m.EYE_BOX[0]) * 2, (m.EYE_BOX[3] - m.EYE_BOX[1]) * 2)
+    assert mon.count_labels["right"].cget("text") == "1"    # sobrevive al redibujo
+    mon._refresh()                                          # dibuja el video al tamaño nuevo
+    fullscreen = []                                         # sin pantalla completa real en las pruebas
+    mon.root.attributes = lambda *args: fullscreen.append(args)
     mon._toggle_demo()
-    assert mon._photo_size == (VIEW_W * 2, VIEW_H * 2)
+    assert fullscreen == [("-fullscreen", True)]
+    assert mon.demo
+    mon._toggle_demo()
     mon.close()
+
+
+def test_estado_del_dictado():
+    assert m.status_of(view("open"), now=100.1, dictation="listening") == (m.DICTATION_TEXT["listening"], m.PINK)
+    assert m.status_of(view("open"), now=100.1, dictation="transcribing", drag="armed")[0] == "TYPING..."
+    assert m.status_of(view("open"), now=100.1, dictation="idle")[0] == "open"
+
+
+
+def test_preview_en_el_monitor():
+    assert m.status_of(view("open"), now=100.1, dictation="preview") == (m.DICTATION_TEXT["preview"], m.GREEN)

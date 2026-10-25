@@ -4,6 +4,8 @@
     STAGE_RIGHT (1.2 s) -> bip 1320 Hz      "si abres ahora es clic derecho"
     CLICK_*             -> doble bip 1000 Hz
     EYE_LOST            -> bip grave 300 Hz, 200 ms
+    STAGE_DRAG  (3.0 s) -> subida 660 -> 990 Hz   "agarrado: mueve la cabeza"
+    DRAG_END            -> bajada 990 -> 660 Hz   "soltado"
 
 Los sonidos se definen en SOUNDS y se generan una sola vez al crear Feedback.
 "Dónde suena" está aparte (SpeakerOutput): para usar el buzzer del ESP32 basta
@@ -41,6 +43,8 @@ SOUNDS = {
     E.CLICK_LEFT: DOUBLE,
     E.CLICK_RIGHT: DOUBLE,
     E.EYE_LOST: [(300, 200)],
+    E.STAGE_DRAG: [(660, 60), (0, 30), (990, 90)],
+    E.DRAG_END: [(990, 60), (0, 30), (660, 90)],
 }
 TYPES = set(SOUNDS)     # para bus.subscribe(feedback, TYPES)
 

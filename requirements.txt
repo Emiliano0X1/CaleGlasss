@@ -7,3 +7,5 @@ pytest
 faster-whisper
 httpx
 python-dotenv
+onnxruntime
+comtypes; sys_platform == "win32"

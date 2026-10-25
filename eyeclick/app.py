@@ -16,8 +16,18 @@ start() hace, en orden:
        log y destruir las ventanas, EN ESE ORDEN (shutdown).
 
 Pausa: F9 (en todos los modos) y el botón del monitor llaman request_pause().
-F9 llega en el hilo de pynput, así que request_pause() solo deja la petición en
-una cola y el tick del hilo principal la aplica (tkinter no es seguro entre hilos).
+Arrastrar: F10 y el botón Drag llaman request_drag().
+Dictado: F11 y el botón "mic" del indicador flotante llaman request_dictation().
+Con DICTATION_AUTO arranca solo al hablar con el foco en un cuadro de texto y queda en
+preview: mientras tanto mouse.intercept manda el parpadeo al dictado (izquierdo = escribir,
+derecho = descartar) en vez de hacer clic. En pausa no arranca solo.
+F9/F10/F11 llegan en el hilo de pynput, así que solo dejan la petición en una cola y
+el tick del hilo principal la aplica (tkinter no es seguro entre hilos).
+Lo que hace el mouse (doble clic, agarrar, soltar) llega por on_action y se muestra
+DESPUÉS de repartir los eventos, para que no lo tape el "click ✓" del mismo clic.
+Sacudir la cabeza recalibra el giroscopio del ESP32 (sin su página). GyroWatch ve los
+avisos que el ESP32 manda con el cursor y aquí se muestran; mientras calibra (hasta
+GYRO_TIMEOUT_S) los parpadeos no hacen clic: al sacudir la cabeza es fácil cerrar el ojo.
 
 Agregar una pieza nueva (voz, agente...) = crear un suscriptor o fuente y registrarlo aquí.
 
@@ -29,14 +39,18 @@ nothing of it is loaded.
 """
 import logging
 import queue
+import time
 import tkinter as tk
 
-from eyeclick.actions import feedback, logger, mouse
+from eyeclick.actions import dictation, feedback, gyro_watch, logger, mouse
 from eyeclick.bus import Bus
-from eyeclick.config import CAMERA_INDEX, DISPATCH_MS
+from eyeclick.config import CAMERA_INDEX, DICTATION_AUTO, DISPATCH_MS
+from eyeclick.events import EventType as E
 from eyeclick.ui import monitor, overlay
 
 log = logging.getLogger(__name__)
+
+GYRO_TIMEOUT_S = 12.0   # sin "listo" del ESP32 en este tiempo: no se quedó quieto
 
 
 def make_source(publish, mock=False, video=None, camera=None):
@@ -56,7 +70,12 @@ class App:
     def __init__(self, mock=False, video=None, camera=None, demo=False, voice=False):
         self.bus = Bus()
         self.source = make_source(self.bus.publish, mock, video, camera)
-        self._pause_requests = queue.SimpleQueue()
+        self._requests = queue.SimpleQueue()    # "pause" / "drag" / "dictate", desde cualquier hilo
+        self._dictation_states = queue.SimpleQueue()    # (estado, nota) desde el hilo del dictado
+        self._gyro_signals = queue.SimpleQueue()        # "start" / "done" desde el hilo de pynput
+        self._gyro_until = None                         # calibrando el giroscopio hasta...
+        self.gyro = gyro_watch.GyroWatch(self._gyro_signals.put_nowait)
+        self._notes = []                        # avisos del mouse para mostrar tras dispatch()
         self._after_id = None
         self._keys = None
         self._closed = False
@@ -64,16 +83,13 @@ class App:
         self.root = tk.Tk()
         self.root.title("EyeClick")
         self.logger = logger.EventLogger()
-        self.mouse = mouse.MouseActions()
+        self.mouse = mouse.MouseActions(on_action=self._notes.append)
+        self.mouse.intercept = self._dictation_blink
         self.feedback = feedback.Feedback()
-        self.overlay = overlay.Overlay(self.root, self.source)
-        self.monitor = monitor.Monitor(self.root, self.source, on_pause=self.request_pause, demo=demo)
-        self.bridge = None
-        if voice:
-            from eyeclick.bridge import Bridge   # here: --voice loads httpx, sounddevice and Whisper
-            from eyeclick.bridge import listener
-            self.bridge = Bridge(beep=self.feedback.beep)
-            self.bus.subscribe(self.bridge.listener, listener.TYPES)
+        self.dictation = dictation.Dictation(on_state=lambda *s: self._dictation_states.put_nowait(s))
+        self.overlay = overlay.Overlay(self.root, self.source, on_dictate=self.request_dictation)
+        self.monitor = monitor.Monitor(self.root, self.source, on_pause=self.request_pause,
+                                       on_drag=self.request_drag, demo=demo)
 
         for sub, types in (
             (self.logger, logger.TYPES),
@@ -93,6 +109,10 @@ class App:
             if self.bridge is not None:
                 self.bridge.start()
             self._start_hotkeys()
+            self.dictation.preload()
+            if DICTATION_AUTO:
+                self.dictation.start_auto()
+            self.gyro.start()
             self._tick()
             self.root.mainloop()
         except KeyboardInterrupt:
@@ -102,7 +122,15 @@ class App:
 
     def request_pause(self):
         """Se puede llamar desde cualquier hilo."""
-        self._pause_requests.put_nowait(True)
+        self._requests.put_nowait("pause")
+
+    def request_drag(self):
+        """Se puede llamar desde cualquier hilo."""
+        self._requests.put_nowait("drag")
+
+    def request_dictation(self):
+        """Se puede llamar desde cualquier hilo."""
+        self._requests.put_nowait("dictate")
 
     def shutdown(self):
         if self._closed:
@@ -110,8 +138,8 @@ class App:
         self._closed = True
         log.info("Cerrando EyeClick")
         self._safe(self.source.stop)
-        if self.bridge is not None:
-            self._safe(self.bridge.stop)
+        self._safe(self.dictation.close)
+        self._safe(self.gyro.stop)
         self._safe(self.monitor.close)      # termina de escribir el video si se estaba grabando
         self._safe(self.overlay.close)
         if self._keys is not None:
@@ -128,35 +156,102 @@ class App:
             return
         while True:
             try:
-                self._pause_requests.get_nowait()
+                request = self._requests.get_nowait()
             except queue.Empty:
                 break
-            self._toggle_pause()
+            if request == "pause":
+                self._toggle_pause()
+            elif request == "drag":
+                self.mouse.toggle_drag()
+            else:
+                self.dictation.toggle()
+        while True:
+            try:
+                state, note = self._dictation_states.get_nowait()
+            except queue.Empty:
+                break
+            self._show_dictation(state, note)
+        self._check_gyro()
         self.bus.dispatch()
-        if self.bridge is not None:
-            self.overlay.set_note(self.bridge.note())
+        if self._notes:
+            notes, self._notes[:] = self._notes[:], []
+            drag = self.mouse.drag
+            for note in notes:
+                self._safe(lambda: self.overlay.set_drag(drag, note))
+                self._safe(lambda: self.monitor.set_drag(drag, note))
         self._after_id = self.root.after(DISPATCH_MS, self._tick)
+
+    def _show_dictation(self, state, note):
+        self._safe(lambda: self.overlay.set_dictation(state, note))
+        self._safe(lambda: self.monitor.set_dictation(state, note))
+        auto = self.dictation.auto      # arrancó solo: ya estaba hablando, sin bips
+        if state == "listening" and not auto:
+            self._safe(lambda: self.feedback.beep(1200, 70))    # "habla ya"
+        elif state == "transcribing" and not auto:
+            self._safe(lambda: self.feedback.beep(700, 70))     # "te escuché"
+        elif state == "preview":
+            self._safe(lambda: self.feedback.beep(990, 120))    # "¿lo escribo?"
+
+    def _check_gyro(self):
+        now = time.monotonic()
+        while True:
+            try:
+                signal = self._gyro_signals.get_nowait()
+            except queue.Empty:
+                break
+            if signal == "start":
+                self._gyro_until = now + GYRO_TIMEOUT_S
+                self._show_gyro("calibrating", None)
+            elif self._gyro_until is not None:
+                self._gyro_until = None
+                self._show_gyro(None, "gyro calibrated ✓")
+                self._safe(lambda: self.feedback.beep(990, 120))
+        if self._gyro_until is not None and now > self._gyro_until:
+            self._gyro_until = None
+            self._show_gyro(None, "gyro not calibrated: hold still after shaking")
+
+    def _show_gyro(self, state, note):
+        self._safe(lambda: self.overlay.set_gyro(state, note))
+        self._safe(lambda: self.monitor.set_gyro(state, note))
+
+    def _dictation_blink(self, ev):
+        """mouse.intercept: calibrando el giroscopio no hay clics; con un dictado en
+        preview, el parpadeo es la respuesta."""
+        if self._gyro_until is not None:
+            return True
+        if self.dictation.state != "preview":
+            return False
+        if ev.type == E.CLICK_LEFT:
+            self.dictation.confirm()
+        else:
+            self.dictation.discard()
+        return True
 
     def _toggle_pause(self):
         paused = self.mouse.toggle_pause()
+        self.dictation.suspended = paused
+        if paused:
+            self.dictation.discard()
         self._safe(lambda: self.overlay.set_paused(paused))
         self._safe(lambda: self.monitor.set_paused(paused))
 
     def _start_hotkeys(self):
-        """F9 = pausa en todos los modos. Sin pynput o sin permisos, la app sigue sin F9."""
+        """F9 = pausa, F10 = arrastrar, F11 = dictar. Sin pynput o sin permisos, la app sigue sin ellas."""
         try:
             from pynput import keyboard
 
             def on_press(key):
                 if key == keyboard.Key.f9:
                     self.request_pause()
-                elif key == keyboard.Key.f10 and self.bridge is not None:
-                    self.bridge.talk()      # pynput's thread: talk() only starts a worker
+                elif key == keyboard.Key.f10:
+                    self.request_drag()
+                elif key == keyboard.Key.f11:
+                    self.request_dictation()
 
             self._keys = keyboard.Listener(on_press=on_press, daemon=True)
             self._keys.start()
         except Exception:
-            log.warning("F9 no disponible; usa el botón Pausa del monitor", exc_info=True)
+            log.warning("F9/F10/F11 no disponibles; usa los botones del monitor", exc_info=True)
 
     @staticmethod
     def _safe(fn):

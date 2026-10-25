@@ -13,3 +13,7 @@ node_modules/
 .forge/
 .env
 stdb/spacetimedb/dist/
+.vs/
+__vm/
+*.vcxproj.user
+wifi_secrets.h

@@ -39,8 +39,8 @@ LOST_DT = 1 / 30        # ritmo al que se alimenta 'lost' mientras no llegan fra
 POLL_S = 0.003          # espera entre consultas a la cámara
 NOTE_S = 6.0            # segundos que se muestra el resultado de la calibración
 HINT_AFTER = 10.0       # segundos sin ver el ojo abierto -> sugerir recalibrar
-HINT_MSG = "No veo el ojo abierto: ¿cambió la luz? Pulsa Recalibrar"
-WAIT_OPEN_MSG = "Abre el ojo para empezar"
+HINT_MSG = "Can't see your eye open: did the light change? Press Recalibrate"
+WAIT_OPEN_MSG = "Open your eye to start"
 
 
 class PipelineSource:
